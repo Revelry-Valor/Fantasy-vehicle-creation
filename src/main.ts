@@ -138,7 +138,7 @@ function renderToolbar() {
   const menu = h('details', { class: 'menu' },
     h('summary', {}, '☰ File'),
     h('div', { class: 'menu-body' },
-      h('button', { onclick: () => { closeMenus(); if (confirm('Start a new empty design?')) store.load(newDesign()); } }, 'New empty design'),
+      h('button', { onclick: () => { closeMenus(); stopSim(); store.load(newDesign()); status('Started a new design. Undo (Ctrl+Z) brings the previous one back.'); } }, 'New empty design'),
       h('div', { class: 'menu-sep' }, 'Templates'),
       TEMPLATES.map((t) => h('button', { title: t.description, onclick: () => { closeMenus(); stopSim(); store.load(t.make()); setTimeout(() => viewport.frameAll(), 200); } }, t.name)),
       h('div', { class: 'menu-sep' }),
@@ -302,7 +302,7 @@ function validate(d: unknown): Design | null {
   if (!f) return;
   const d = validate(JSON.parse(await f.text()));
   if (d) { stopSim(); store.load(d); setTimeout(() => viewport.frameAll(), 200); }
-  else alert('That file is not a vessel design.');
+  else status('That file is not a vessel design.');
   (e.target as HTMLInputElement).value = '';
 });
 
