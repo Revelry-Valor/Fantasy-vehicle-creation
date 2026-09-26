@@ -3,7 +3,7 @@ import { getDef } from '../core/catalog';
 import { FLUIDS, getFluid } from '../core/fluids';
 import { partVolume } from '../core/geometry';
 import { MATERIALS } from '../core/materials';
-import { deckOutline, facesView } from '../core/pens';
+import { armorOf, armorProps, deckOutline, facesView, type ArmorSide } from '../core/pens';
 import type { Store } from '../core/store';
 import type { PartInstance, Vec3 } from '../core/types';
 import { h, clear, fmt, num } from './dom';
@@ -96,12 +96,19 @@ export class InspectorPanel {
         ...MATERIALS.map((m) => h('option', { value: m.id, selected: m.id === cur }, `${m.name}${m.fantasy ? ' ✦' : ''}`))];
       rows.push(h('div', { class: 'section-title' }, 'Sheet & armor'));
       rows.push(num('Sheet', p.size[1] * 1000, (v) => up({ size: [p.size[0], Math.max(0.5, v) / 1000, p.size[2]] }), { step: 1, min: 0.5, unit: 'mm' }));
-      rows.push(h('label', { class: 'field' }, h('span', {}, 'Outside face'),
-        h('select', { onchange: (e) => setProp('skinOuter', (e.target as HTMLSelectElement).value) }, skinOpts(String(p.props.skinOuter ?? 'none')))));
-      rows.push(h('label', { class: 'field' }, h('span', {}, 'Inside face'),
-        h('select', { onchange: (e) => setProp('skinInner', (e.target as HTMLSelectElement).value) }, skinOpts(String(p.props.skinInner ?? 'none')))));
-      rows.push(num('Armor', Number(p.props.skinThickness ?? 0.03) * 1000, (v) => setProp('skinThickness', Math.max(0.5, v) / 1000), { step: 1, min: 0.5, unit: 'mm' }));
-      rows.push(h('button', { class: 'wide', onclick: () => setProp('outSign', Number(p.props.outSign ?? 1) >= 0 ? -1 : 1) }, '⇅ Swap outside and inside'));
+      const armor = armorOf(p);
+      const setArmor = (material: string, side: ArmorSide) => up({ props: armorProps(material, side) });
+      rows.push(h('label', { class: 'field' }, h('span', {}, 'Armor'),
+        h('select', { onchange: (e) => setArmor((e.target as HTMLSelectElement).value, armor.side) }, skinOpts(armor.material))));
+      if (armor.material !== 'none') {
+        rows.push(h('div', { class: 'seg' }, h('span', {}, 'Armor on'),
+          ...(['outside', 'inside', 'both'] as ArmorSide[]).map((side) =>
+            h('button', { class: armor.side === side ? 'active' : '', onclick: () => setArmor(armor.material, side) }, side[0].toUpperCase() + side.slice(1)))));
+        rows.push(num('Armor', Number(p.props.skinThickness ?? 0.03) * 1000, (v) => setProp('skinThickness', Math.max(0.5, v) / 1000), { step: 1, min: 0.5, unit: 'mm' }));
+        if (armor.side !== 'both') {
+          rows.push(h('button', { class: 'wide', onclick: () => setArmor(armor.material, armor.side === 'outside' ? 'inside' : 'outside') }, '⇅ Flip armor to the other face'));
+        }
+      }
       const where = facesView(p, 'top') ? 'the top plan' : facesView(p, 'side') ? 'the side profile' : '';
       rows.push(h('p', { class: 'hint' }, p.points
         ? `Shaped sheet, ${deckOutline(p).length} corners.${where ? ` In ${where}: drag corners, drag a + to add one, double-click a corner to remove it.` : ''}`

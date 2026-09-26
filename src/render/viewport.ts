@@ -11,10 +11,12 @@ import { buildContactGraph, buildFluidNetworks } from '../core/networks';
 import type { Store } from '../core/store';
 import type { PartInstance, Vec3 } from '../core/types';
 import type { Simulation } from '../sim/simulation';
+import { DEFAULT_PEN_OPTIONS, type PenOptions } from '../core/pens';
+import { Draw3D, type Pen3D } from './draw3d';
 import { animatePart, buildPartObject, type PartObject } from './meshes';
 
 export type ViewMode = 'structure' | 'interior' | 'exterior';
-export type Tool = 'select' | 'place' | 'damage';
+export type Tool = 'select' | 'place' | 'damage' | 'draw';
 export type GizmoMode = 'translate' | 'rotate' | 'scale';
 
 interface Entry {
@@ -82,6 +84,10 @@ export class Viewport {
   private styleOpts: StyleOpts = { analysis: null, sim: null };
   private fluidOfPart = new Map<string, string>();
   private downAt: { x: number; y: number } | null = null;
+  private rightDownAt: { x: number; y: number } | null = null;
+  draw!: Draw3D;
+  /** Shared with the blueprint so both editors draw with the same pen settings. */
+  penOptions: () => PenOptions = () => ({ ...DEFAULT_PEN_OPTIONS });
 
   constructor(private container: HTMLElement, private store: Store) {
     this.renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true });
@@ -182,6 +188,16 @@ export class Viewport {
     this.particles = new Particles();
     this.vehicle.add(this.particles.points);
 
+    const self = this;
+    this.draw = new Draw3D({
+      camera: this.camera,
+      dom: this.renderer.domElement,
+      vehicle: this.vehicle,
+      get snap() { return self.snap; },
+      rayFrom: (e) => { this.setPointer(e); return this.raycaster.ray.clone(); },
+      pickPoint: (e) => this.pick(e)?.point ?? null,
+      onStatus: (m) => this.onStatus(m),
+    }, store, () => this.penOptions());
     this.bindPointer();
     new ResizeObserver(() => this.resize()).observe(container);
     this.resize();
@@ -262,13 +278,20 @@ export class Viewport {
     this.restyle();
   }
 
+  /** Start drawing supports or framing in 3D. */
+  startDraw(pen: Pen3D) {
+    this.setTool('draw');
+    this.draw.start(pen);
+  }
+
   setTool(t: Tool, placeType: string | null = null) {
+    if (t !== 'draw') this.draw?.stop();
     this.tool = t;
     this.placeType = placeType;
     this.clearGhost();
     if (t === 'place' && placeType) this.makeGhost(placeType);
     this.attachGizmo();
-    this.renderer.domElement.style.cursor = t === 'place' ? 'copy' : t === 'damage' ? 'crosshair' : 'default';
+    this.renderer.domElement.style.cursor = t === 'place' ? 'copy' : t === 'damage' || t === 'draw' ? 'crosshair' : 'default';
   }
 
   setGizmoMode(m: GizmoMode) {
@@ -481,7 +504,16 @@ export class Viewport {
   // ── Pointer interaction ────────────────────────────────────────────────────
   private bindPointer() {
     const dom = this.renderer.domElement;
-    dom.addEventListener('pointerdown', (e) => { this.downAt = { x: e.clientX, y: e.clientY }; });
+    dom.addEventListener('pointerdown', (e) => {
+      this.downAt = { x: e.clientX, y: e.clientY };
+      this.rightDownAt = e.button === 2 ? { x: e.clientX, y: e.clientY } : null;
+    });
+    dom.addEventListener('pointerup', (e) => {
+      // A right-click (not a right-drag pan) finishes what's being drawn.
+      if (e.button !== 2 || !this.rightDownAt || this.tool !== 'draw') return;
+      if (Math.hypot(e.clientX - this.rightDownAt.x, e.clientY - this.rightDownAt.y) < 5) this.draw.finish();
+      this.rightDownAt = null;
+    });
     dom.addEventListener('pointermove', (e) => this.onMove(e));
     dom.addEventListener('pointerup', (e) => {
       if (!this.downAt || e.button !== 0) return;
@@ -522,6 +554,7 @@ export class Viewport {
   }
 
   private onMove(e: PointerEvent) {
+    if (this.tool === 'draw') { this.draw.move(e); return; }
     if (this.tool === 'place' && this.ghost && this.ghostPart) {
       this.positionGhost(e);
       return;
@@ -540,6 +573,7 @@ export class Viewport {
   }
 
   private onClick(e: PointerEvent) {
+    if (this.tool === 'draw') { this.draw.click(e); return; }
     if (this.tool === 'place') {
       if (this.ghostPart && this.ghost?.visible) {
         const part = this.store.makePart(this.ghostPart.type, this.ghostPart.position, this.ghostPart.rotation);

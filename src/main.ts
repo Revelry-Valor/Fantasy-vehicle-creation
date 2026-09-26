@@ -47,6 +47,18 @@ const catalog = new CatalogPanel(catalogEl, (def) => {
   renderToolbar();
 });
 blueprint.onStatus = (m) => status(m);
+viewport.penOptions = () => blueprint.opts;
+penPanel.draw3d = {
+  get pen() { return viewport.tool === 'draw' ? viewport.draw.pen : null; },
+  setPen(pen) {
+    if (sim) return status('Stop the simulation to edit.');
+    if (pen === 'support' || pen === 'frame') viewport.startDraw(pen);
+    else viewport.setTool('select');
+    catalog.setActive(null);
+    penPanel.render();
+    renderToolbar();
+  },
+};
 blueprint.onToolChange = () => {
   if (blueprint.tool !== 'place') catalog.setActive(null);
   penPanel.render();
@@ -236,6 +248,7 @@ function renderToolbar() {
     ),
     simBtn,
   );
+  penPanel.render();
 }
 
 function setMode(m: Mode) {
@@ -246,13 +259,13 @@ function setMode(m: Mode) {
   viewport.active = !is2d;
   viewport.renderer.domElement.hidden = is2d;
   viewport.labelRenderer.domElement.hidden = is2d;
+  penPanel.mode = m;
   if (is2d) {
     viewport.setTool('select');
-    pensEl.hidden = false;
     penPanel.render();
   } else {
     blueprint.setTool('select');
-    pensEl.hidden = true;
+    penPanel.render();
     viewport.sync();
     setTimeout(() => viewport.frameAll(), 30);
   }
@@ -429,6 +442,14 @@ window.addEventListener('keydown', (e) => {
       });
     }
     return;
+  }
+  if (viewport.tool === 'draw') {
+    if (k === 'enter') { viewport.draw.finish(); return; }
+    if (k === 'escape') {
+      if (viewport.draw.points.length) viewport.draw.cancel();
+      else { viewport.setTool('select'); penPanel.render(); renderToolbar(); }
+      return;
+    }
   }
   if (k === 'escape') { viewport.setTool('select'); catalog.setActive(null); store.select([]); renderToolbar(); return; }
   if (k === 'w') { viewport.setGizmoMode('translate'); renderToolbar(); }

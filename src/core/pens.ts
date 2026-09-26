@@ -1,4 +1,4 @@
-import { Euler, Quaternion, Vector3 } from 'three';
+import { Euler, Matrix4, Quaternion, Vector3 } from 'three';
 import { getDef } from './catalog';
 import { localToWorld, mirrorTransform, rotationMatrix } from './geometry';
 import { newId, type Design, type PartInstance, type Vec3 } from './types';
@@ -16,6 +16,35 @@ export type PenKind = 'floor' | 'room' | 'support' | 'frame';
 export type SupportType = 'beam' | 'ibeam' | 'strut' | 'truss';
 
 export interface P2 { u: number; v: number }
+
+export type ArmorSide = 'outside' | 'inside' | 'both';
+
+/** Armor props for a framing sheet given a material and the face(s) to cover. */
+export function armorProps(material: string, side: ArmorSide): { skinOuter: string; skinInner: string } {
+  const on = material !== 'none';
+  return {
+    skinOuter: on && side !== 'inside' ? material : 'none',
+    skinInner: on && side !== 'outside' ? material : 'none',
+  };
+}
+
+/** Which face(s) of a framing sheet carry armor, and in what. */
+export function armorOf(p: PartInstance): { material: string; side: ArmorSide } {
+  const o = String(p.props.skinOuter ?? 'none'), i = String(p.props.skinInner ?? 'none');
+  if (o !== 'none' && i !== 'none') return { material: o, side: 'both' };
+  if (i !== 'none') return { material: i, side: 'inside' };
+  return { material: o, side: 'outside' };
+}
+
+/**
+ * What a stroke connected to when it started on an existing part: the
+ * out-of-plane position of that point (side view: how far off the centre
+ * line; top view: height) and, for floors and framing, their width.
+ */
+export interface Anchor {
+  out?: number;
+  width?: number;
+}
 
 export interface FloorType { id: string; name: string; material: string; thickness: number }
 
@@ -63,13 +92,12 @@ export interface PenOptions {
   supportSize: number;
   /** Side view: put supports against both side walls (mirrored) or on the centre line. */
   supportPlacement: 'sides' | 'centre';
-  /** Top view: draw horizontal beams or stand vertical pillars. */
-  supportOrientation: 'beam' | 'pillar';
   /** Framing sheet: material and thickness (see FRAME_TYPES). */
   frameMaterial: string;
   frameDepth: number;
-  skinOuter: string;
-  skinInner: string;
+  /** Armor plating on framing: material ('none' for bare sheet) and which face it goes on. */
+  armorMaterial: string;
+  armorSide: ArmorSide;
   skinThickness: number;
 }
 
@@ -81,11 +109,10 @@ export const DEFAULT_PEN_OPTIONS: PenOptions = {
   supportMaterial: 'oak',
   supportSize: 0.2,
   supportPlacement: 'sides',
-  supportOrientation: 'pillar',
   frameMaterial: 'pine',
   frameDepth: 0.04,
-  skinOuter: 'none',
-  skinInner: 'none',
+  armorMaterial: 'none',
+  armorSide: 'outside',
   skinThickness: 0.03,
 };
 
@@ -147,14 +174,14 @@ export function floorTypeOf(opts: PenOptions): FloorType {
  * Floor pen. Side view: a horizontal line marking the walking surface, `width`
  * wide. Top view: a rectangle at the active layer's elevation.
  */
-export function drawFloor(view: PlaneView, a: P2, b: P2, opts: PenOptions, layerY = 0): PartInstance[] {
+export function drawFloor(view: PlaneView, a: P2, b: P2, opts: PenOptions, layerY = 0, anchor: Anchor = {}): PartInstance[] {
   const ft = floorTypeOf(opts);
   const t = ft.thickness;
   if (view === 'side') {
     const y = a.v;
     const len = Math.abs(b.u - a.u);
     if (len < 0.05) return [];
-    return [named(part('deck', [0, y - t / 2, (a.u + b.u) / 2], [opts.width, t, len], [0, 0, 0], ft.material), 'Floor')];
+    return [named(part('deck', [0, y - t / 2, (a.u + b.u) / 2], [anchor.width ?? opts.width, t, len], [0, 0, 0], ft.material), 'Floor')];
   }
   const len = Math.abs(b.u - a.u), wid = Math.abs(b.v - a.v);
   if (len < 0.05 || wid < 0.05) return [];
@@ -162,8 +189,8 @@ export function drawFloor(view: PlaneView, a: P2, b: P2, opts: PenOptions, layer
 }
 
 /** Floor + ceiling + the air volume between them. */
-export function drawRoom(view: PlaneView, a: P2, b: P2, opts: PenOptions, layerY = 0): PartInstance[] {
-  const floor = drawFloor(view, a, b, opts, layerY);
+export function drawRoom(view: PlaneView, a: P2, b: P2, opts: PenOptions, layerY = 0, anchor: Anchor = {}): PartInstance[] {
+  const floor = drawFloor(view, a, b, opts, layerY, anchor);
   if (!floor.length) return [];
   const f = floor[0];
   const t = f.size[1];
@@ -186,28 +213,37 @@ function supportSize(opts: PenOptions, length: number): Vec3 {
 
 /**
  * Supports. Side view: any line (the editor snaps it to horizontal/vertical),
- * standing against both side walls (a mirrored pair) or on the centre line.
- * Top view: a horizontal beam under the active floor, or a pillar standing on
- * it; the editor's mirror setting decides whether those get a twin.
+ * standing against both side walls (a mirrored pair) or on the centre line —
+ * or, when started from another support, at that support's offset.
+ * Top view: drag a line for a horizontal beam (under the active floor, or at
+ * the height of the support it starts from); a single click stands a pillar.
  */
-export function drawSupport(view: PlaneView, a: P2, b: P2, opts: PenOptions, layerY = 0, floorThickness = 0.05): PartInstance[] {
+export function drawSupport(view: PlaneView, a: P2, b: P2, opts: PenOptions, layerY = 0, floorThickness = 0.05, anchor: Anchor = {}): PartInstance[] {
   const type = SUPPORT_TYPES.find((s) => s.id === opts.supportType)!.part;
-  if (view === 'top' && opts.supportOrientation === 'pillar') {
-    const H = opts.ceilingHeight;
-    const size = supportSize(opts, H);
-    return [named(part(type, [a.v, layerY + H / 2, a.u], size, [-Math.PI / 2, 0, 0], opts.supportMaterial), 'Pillar')];
-  }
   const { length } = segmentTransform(view, a, b);
+  if (view === 'top' && length < 0.05) {
+    const H = opts.ceilingHeight;
+    const base = anchor.out ?? layerY;
+    return [named(part(type, [a.v, base + H / 2, a.u], supportSize(opts, H), [-Math.PI / 2, 0, 0], opts.supportMaterial), 'Pillar')];
+  }
   if (length < 0.05) return [];
   const size = supportSize(opts, length);
   if (view === 'top') {
-    const tr = segmentTransform(view, a, b, layerY - floorThickness - size[1] / 2);
+    const tr = segmentTransform(view, a, b, anchor.out ?? layerY - floorThickness - size[1] / 2);
     return [named(part(type, tr.position, size, tr.rotation, opts.supportMaterial), 'Beam')];
   }
-  const x = opts.supportPlacement === 'sides' ? Math.max(0, opts.width / 2 - size[0] / 2) : 0;
+  const width = anchor.width ?? opts.width;
+  const x = anchor.out !== undefined ? Math.abs(anchor.out) : opts.supportPlacement === 'sides' ? Math.max(0, width / 2 - size[0] / 2) : 0;
   const tr = segmentTransform(view, a, b, x);
   const p = named(part(type, tr.position, size, tr.rotation, opts.supportMaterial), 'Support');
-  return x > 0 ? mirrorPair(p) : [p];
+  return x > 0.02 ? mirrorPair(p) : [p];
+}
+
+/** How far a support/sheet reaches either side of its drawn centre line, within the drawing plane. */
+export function halfDepth(view: PlaneView, pen: PenKind, opts: PenOptions): number {
+  if (pen === 'frame') return opts.frameDepth / 2;
+  const s = supportSize(opts, 1);
+  return (view === 'side' ? s[1] : s[0]) / 2;
 }
 
 function named(p: PartInstance, name: string): PartInstance {
@@ -221,7 +257,7 @@ function named(p: PartInstance, name: string): PartInstance {
  * are walls standing on the active layer. Each segment's "outside" faces away
  * from the middle of the chain it belongs to.
  */
-export function drawFraming(view: PlaneView, chain: P2[], opts: PenOptions, layerY = 0): PartInstance[] {
+export function drawFraming(view: PlaneView, chain: P2[], opts: PenOptions, layerY = 0, anchor: Anchor = {}): PartInstance[] {
   const parts: PartInstance[] = [];
   const centroid = chain.reduce((acc, p) => ({ u: acc.u + p.u / chain.length, v: acc.v + p.v / chain.length }), { u: 0, v: 0 });
   for (let i = 0; i + 1 < chain.length; i++) {
@@ -230,10 +266,9 @@ export function drawFraming(view: PlaneView, chain: P2[], opts: PenOptions, laye
     const H = opts.ceilingHeight;
     const tr = segmentTransform(view, a, b, wall ? layerY + H / 2 : 0, wall);
     if (tr.length < 0.05) continue;
-    const span = wall ? H : opts.width;
+    const span = wall ? H : anchor.width ?? opts.width;
     const p = named(part('frame', tr.position, [span, opts.frameDepth, tr.length], tr.rotation, opts.frameMaterial), wall ? 'Wall frame' : 'Frame');
-    p.props.skinOuter = opts.skinOuter;
-    p.props.skinInner = opts.skinInner;
+    Object.assign(p.props, armorProps(opts.armorMaterial, opts.armorSide));
     p.props.skinThickness = opts.skinThickness;
     p.props.outSign = outwardSign(view, p, { u: (a.u + b.u) / 2 - centroid.u, v: (a.v + b.v) / 2 - centroid.v });
     parts.push(p);
@@ -273,6 +308,72 @@ export function drawHullSides(loop: P2[], opts: PenOptions): PartInstance | null
   p.props.area = round(area);
   p.props.volume = round(area * opts.width);
   return p;
+}
+
+// ── Drawing in 3D ───────────────────────────────────────────────────────────
+
+function basisRotation(x: Vector3, y: Vector3, z: Vector3): Vec3 {
+  const m = new Matrix4().makeBasis(x, y, z);
+  const e = new Euler().setFromRotationMatrix(m, 'XYZ');
+  return [e.x, e.y, e.z];
+}
+
+/** A support running between two points anywhere in space. */
+export function support3D(a: Vec3, b: Vec3, opts: PenOptions): PartInstance | null {
+  const A = new Vector3(...a), B = new Vector3(...b);
+  const dir = B.clone().sub(A);
+  const len = dir.length();
+  if (len < 0.05) return null;
+  const z = dir.normalize();
+  // Keep the beam's width horizontal where possible.
+  let x = new Vector3(0, 1, 0).cross(z);
+  if (x.lengthSq() < 1e-6) x = new Vector3(1, 0, 0);
+  x.normalize();
+  const y = z.clone().cross(x).normalize();
+  const type = SUPPORT_TYPES.find((s) => s.id === opts.supportType)!.part;
+  const mid = A.clone().add(B).multiplyScalar(0.5);
+  return named(part(type, [mid.x, mid.y, mid.z], supportSize(opts, len), basisRotation(x, y, z), opts.supportMaterial), 'Support');
+}
+
+/**
+ * A framing sheet through three or more clicked corners. The corners are
+ * flattened onto their best-fit plane; `centre` (the rest of the craft) decides
+ * which face is the outside.
+ */
+export function framePolygon3D(points: Vec3[], opts: PenOptions, centre?: Vec3): PartInstance | null {
+  if (points.length < 3) return null;
+  const P = points.map((p) => new Vector3(...p));
+  // Newell's method: robust normal for any (even slightly bent) polygon.
+  const n = new Vector3();
+  for (let i = 0; i < P.length; i++) {
+    const a = P[i], b = P[(i + 1) % P.length];
+    n.x += (a.y - b.y) * (a.z + b.z);
+    n.y += (a.z - b.z) * (a.x + b.x);
+    n.z += (a.x - b.x) * (a.y + b.y);
+  }
+  if (n.lengthSq() < 1e-9) return null;
+  n.normalize();
+  const origin = P.reduce((acc, p) => acc.add(p), new Vector3()).multiplyScalar(1 / P.length);
+  let z = P[1].clone().sub(P[0]);
+  z.sub(n.clone().multiplyScalar(z.dot(n)));
+  if (z.lengthSq() < 1e-9) return null;
+  z = z.normalize();
+  const x = n.clone().cross(z).normalize();
+  const temp = part('frame', [origin.x, origin.y, origin.z], [1, opts.frameDepth, 1], basisRotation(x, n, z), opts.frameMaterial);
+  const outline: [number, number][] = P.map((p) => {
+    const d = p.clone().sub(origin);
+    return [d.dot(x), d.dot(z)];
+  });
+  const shaped = withDeckOutline(temp, outline);
+  const f: PartInstance = { ...temp, ...shaped };
+  f.name = 'Frame';
+  Object.assign(f.props, armorProps(opts.armorMaterial, opts.armorSide));
+  f.props.skinThickness = opts.skinThickness;
+  if (centre) {
+    const away = origin.clone().sub(new Vector3(...centre));
+    f.props.outSign = away.dot(n) >= 0 ? 1 : -1;
+  }
+  return f;
 }
 
 // ── Editing ─────────────────────────────────────────────────────────────────

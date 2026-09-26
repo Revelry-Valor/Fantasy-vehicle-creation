@@ -34,14 +34,14 @@ real part, so it shows up in 3D with its weight and strength.
 |---|---|---|
 | **Floor** | a horizontal line marking the walking surface, *Width* wide | a rectangle on the active layer |
 | **Floor + ceiling** | floor, ceiling *Ceiling height* above it, and the room between | same, as a rectangle |
-| **Supports** | beams and pillars, snapped to horizontal and vertical (Shift for any angle), placed against both side walls or on the centre line | vertical pillars (one click) or horizontal beams under the deck |
+| **Supports** | beams and pillars, snapped to horizontal and vertical (Shift for any angle), placed against both side walls or on the centre line | click, click for a horizontal beam under the active deck (on the ground if there are no decks yet); double-click for a standing pillar |
 | **Framing** | the outline of the craft, point by point, in thin planking or metal sheet. Each section spans the width. Click the first point again to close the loop and seal the hull | walls standing on the active layer |
 
 Framing is thin sheet: pine, oak or skywood planking, or iron, steel,
 aluminium, bronze or mythril sheet. You set the thickness in millimetres.
-Each section can also carry armor on its **outside** face, its **inside**
-face, or both. You can change all of this later in the inspector, where
-there's also a button to swap which face counts as the outside. Sheets and
+Each section can also carry armor. Pick the armor material, then choose
+**Armor on: Outside / Inside / Both**. In the inspector, *Flip armor to the
+other face* moves it across if it landed on the wrong side. Sheets and
 floors are treated as held along their long edges, so they span the short
 way.
 
@@ -59,9 +59,23 @@ Mirrored twins reshape together. *Reset to a rectangle* in the inspector
 undoes the shaping. A sheet seen edge-on (for example a roof in the side
 profile) still shows its two end dots for changing length and angle.
 
-**Snapping:** pens and drags snap to the ends of other parts (yellow circle),
-to the surfaces of parts (green diamond), line up with existing points
-(dashed guides), and otherwise to the grid.
+**Snapping and connecting:** pens and drags snap in this order:
+- the ends of a part's centre line and every corner of its outline (yellow
+  circle)
+- a part's faces or centre line (green diamond)
+- lines through existing points (dashed guides)
+- otherwise the grid.
+
+A new part inherits from what you start it on:
+- **Faces:** start a stroke on a face and the new part sits against that
+  face instead of cutting through it. For example, a floor drawn along the
+  top of a beam rests on the beam, and a beam drawn along the underside of a
+  floor hangs below it.
+- **Supports:** a support started on another support keeps that support's
+  position. In the side profile that's its distance from the centre line, so
+  an indented beam stays indented. In the top plan it's its height.
+- **Floors and framing:** started on another floor or sheet, they take that
+  part's width.
 
 **Layers:** use **Make layer** and click a floor, or use the button in the
 inspector. In the top plan you draw on the active layer. Tick
@@ -77,6 +91,21 @@ above the cut is a dashed outline.
 
 **Navigation:** the mouse wheel zooms at the cursor. Right-drag, middle-drag
 or Space-drag pans. `F` fits the drawing to the screen.
+
+## Drawing in 3D
+
+In 3D mode the left panel offers **Supports** and **Framing** pens that work
+directly on the model:
+- **Snapping:** points snap to the ends and corners of parts (yellow), to
+  part surfaces (green), or to a working plane at the height of the last
+  point (blue). Hold Shift to draw straight up and down. Lines lock to the
+  X, Y and Z axes when you're close.
+- **Supports:** each click runs a support from the last point. Esc or
+  right-click stops.
+- **Framing:** click three or more corners, then click the first corner
+  again or press Enter. You get a flat sheet through those corners, such as
+  a side panel between existing frames. Its outside faces away from the
+  rest of the craft.
 
 ## 3D camera
 

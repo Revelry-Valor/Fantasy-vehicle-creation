@@ -146,3 +146,58 @@ describe('shaped framing', () => {
     expect(facesView(wall, 'top')).toBe(false);
   });
 });
+
+describe('connections, armor and 3D', () => {
+  test('a support started from an indented support keeps that offset', async () => {
+    const { drawSupport } = await import('../src/core/pens');
+    const parts = drawSupport('side', { u: 0, v: 0 }, { u: 0, v: 2 }, opts, 0, 0.05, { out: 1.2 });
+    expect(parts).toHaveLength(2);
+    expect(Math.abs(parts[0].position[0])).toBeCloseTo(1.2);
+  });
+
+  test('a floor started on a narrower sheet takes its width', async () => {
+    const [f] = drawFloor('side', { u: 0, v: 1 }, { u: 3, v: 1 }, opts, 0, { width: 2.5 });
+    expect(f.size[0]).toBeCloseTo(2.5);
+  });
+
+  test('top-plan beams and pillars', async () => {
+    const { drawSupport } = await import('../src/core/pens');
+    const [beam] = drawSupport('top', { u: 0, v: 1 }, { u: 4, v: 1 }, opts, 2, 0.05);
+    expect(beam.name).toBe('Beam');
+    expect(beam.position[1]).toBeLessThan(2); // tucked under the deck
+    const [atHeight] = drawSupport('top', { u: 0, v: 1 }, { u: 4, v: 1 }, opts, 2, 0.05, { out: 3.4 });
+    expect(atHeight.position[1]).toBeCloseTo(3.4);
+    const [pillar] = drawSupport('top', { u: 1, v: 1 }, { u: 1, v: 1 }, { ...opts, ceilingHeight: 2.4 }, 2);
+    expect(pillar.name).toBe('Pillar');
+    expect(pillar.position[1]).toBeCloseTo(3.2);
+  });
+
+  test('armor side choices', async () => {
+    const { armorProps } = await import('../src/core/pens');
+    expect(armorProps('steel', 'outside')).toEqual({ skinOuter: 'steel', skinInner: 'none' });
+    expect(armorProps('steel', 'inside')).toEqual({ skinOuter: 'none', skinInner: 'steel' });
+    expect(armorProps('steel', 'both')).toEqual({ skinOuter: 'steel', skinInner: 'steel' });
+    expect(armorProps('none', 'both')).toEqual({ skinOuter: 'none', skinInner: 'none' });
+  });
+
+  test('3D support runs between two points', async () => {
+    const { support3D } = await import('../src/core/pens');
+    const s = support3D([0, 0, 0], [1, 2, 2], opts)!;
+    const [a, b] = endpoints(s);
+    const ends = [a, b].map((w) => w.map((v) => +v.toFixed(3)));
+    expect(ends).toContainEqual([0, 0, 0]);
+    expect(ends).toContainEqual([1, 2, 2]);
+  });
+
+  test('3D framing sheet passes through its corners', async () => {
+    const { framePolygon3D, deckCorners } = await import('../src/core/pens');
+    const pts: [number, number, number][] = [[2, 0, 0], [2, 0, 3], [2, 2, 3], [2, 2, 0]]; // a side panel at x = 2
+    const f = framePolygon3D(pts, opts, [0, 1, 1.5])!;
+    const corners = deckCorners(f).map((w) => w.map((v) => +v.toFixed(3)));
+    for (const p of pts) expect(corners).toContainEqual(p);
+    // Outside faces away from the craft (towards +x).
+    expect(f.props.outSign).toBeDefined();
+    const n = rotationMatrix(f.rotation);
+    expect(n[1] * Number(f.props.outSign)).toBeGreaterThan(0);
+  });
+});
