@@ -3,7 +3,7 @@ import { localToWorld } from '../core/geometry';
 import { getMaterial } from '../core/materials';
 import {
   DEFAULT_PEN_OPTIONS, deckCorners, deckOutline, drawFloor, drawFraming, drawHullSides, drawRoom, drawSupport, endpoints, floorTypeOf,
-  isSegmentLike, layerOf, moveEndpoint, outwardSign, outOfPlane, resolveLayers, toPlane, toWorld, withDeckOutline, worldToLocal,
+  isSegmentLike, layerOf, moveEndpoint, outwardSign, outOfPlane, resolveLayers, toPlane, toWorld, withDeckOutline, isSheet, facesView, planeToSheetLocal,
   type P2, type PenKind, type PenOptions, type PlaneView, type ResolvedLayer,
 } from '../core/pens';
 import type { Store } from '../core/store';
@@ -203,7 +203,7 @@ export class Blueprint {
       const poly = this.project(p);
       const min = { u: Math.min(...poly.map((q) => q.u)), v: Math.min(...poly.map((q) => q.v)) };
       const max = { u: Math.max(...poly.map((q) => q.u)), v: Math.max(...poly.map((q) => q.v)) };
-      const ends = isSegmentLike(p) && !(this.view === 'top' && p.type === 'deck') ? (endpoints(p).map((w) => toPlane(this.view, w)) as [P2, P2]) : null;
+      const ends = isSegmentLike(p) && !(isSheet(p) && facesView(p, this.view)) ? (endpoints(p).map((w) => toPlane(this.view, w)) as [P2, P2]) : null;
       // Draw far things first. Side view looks from −X; top view from above.
       const depth = this.view === 'side' ? -p.position[0] : p.position[1];
       out.push({ part: p, poly, min, max, ends, depth, dim });
@@ -217,7 +217,7 @@ export class Blueprint {
   }
 
   private project(p: PartInstance): P2[] {
-    if (p.type === 'deck' && p.points && this.view === 'top') return deckCorners(p).map((w) => toPlane(this.view, w));
+    if (isSheet(p) && p.points && facesView(p, this.view)) return deckCorners(p).map((w) => toPlane(this.view, w));
     if (p.type === 'hullSides' && this.view === 'side' && p.points) {
       const out: P2[] = [];
       for (let i = 0; i + 2 < p.points.length; i += 3) out.push({ u: p.position[2] + p.points[i + 2], v: p.position[1] + p.points[i + 1] });
@@ -364,13 +364,13 @@ export class Blueprint {
     return best;
   }
 
-  /** Corner and edge-midpoint handles of the selected floors (top plan only). */
+  /** Corner and edge-midpoint handles of selected floors and framing sheets that face this view. */
   private outlineHandles(): { id: string; index: number; kind: 'corner' | 'edge'; p: P2 }[] {
-    if (this.view !== 'top' || this.tool !== 'select') return [];
+    if (this.tool !== 'select') return [];
     const out: { id: string; index: number; kind: 'corner' | 'edge'; p: P2 }[] = [];
     for (const id of this.store.selection) {
       const part = this.store.get(id);
-      if (!part || part.type !== 'deck') continue;
+      if (!part || !isSheet(part) || !facesView(part, this.view)) continue;
       const c = deckCorners(part).map((w) => toPlane(this.view, w));
       c.forEach((q, i) => {
         out.push({ id, index: i, kind: 'corner', p: q });
@@ -404,7 +404,7 @@ export class Blueprint {
     if (!h || h.kind !== 'corner') return false;
     const part = this.store.get(h.id)!;
     const outline = deckOutline(part);
-    if (outline.length <= 3) { this.onStatus('A floor needs at least three corners.'); return true; }
+    if (outline.length <= 3) { this.onStatus('A sheet needs at least three corners.'); return true; }
     this.store.snapshot();
     outline.splice(h.index, 1);
     this.setOutline(h.id, outline);
@@ -659,10 +659,8 @@ export class Blueprint {
     const s = this.snap(raw, { exclude: new Set([d.id]) });
     this.hover = s;
     const to = free ? raw : s.p;
-    const corner = deckCorners(part)[d.index];
-    const local = worldToLocal(part, toWorld(this.view, to, corner[1]));
     const outline = deckOutline(part);
-    outline[d.index] = [local[0], local[2]];
+    outline[d.index] = planeToSheetLocal(part, this.view, to);
     d.moved = true;
     this.setOutline(d.id, outline);
     this.onStatus(`Corner at (${to.u.toFixed(2)}, ${to.v.toFixed(2)}) m · Alt = no snapping`);

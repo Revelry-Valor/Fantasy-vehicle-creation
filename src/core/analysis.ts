@@ -1,6 +1,6 @@
 import { getDef, type Category } from './catalog';
 import { G, WATER_DENSITY, airDensityAt, getFluid } from './fluids';
-import { partArea, partVolume, shapeVolume, unionAABB, worldAABB, type AABB } from './geometry';
+import { outlineAreaXZ, partArea, partVolume, shapeVolume, unionAABB, worldAABB, type AABB } from './geometry';
 import { getMaterial } from './materials';
 import { buildContactGraph, buildFluidNetworks, solvePower, type ContactGraph } from './networks';
 import type { Design, PartInstance, Vec3 } from './types';
@@ -89,11 +89,13 @@ export function contentsMass(p: PartInstance, fill: number): number {
 /** A framing section is a thin sheet (planking or metal plate) plus any plating on its faces. */
 function frameMass(p: PartInstance): number {
   const [span, t, len] = p.size;
-  let m = span * t * len * getMaterial(p.material).density;
+  // A reshaped sheet weighs what its outline covers.
+  const area = p.points && p.points.length >= 9 ? outlineAreaXZ(p.points) : span * len;
+  let m = area * t * getMaterial(p.material).density;
   const skinT = Number(p.props.skinThickness ?? 0.03);
   for (const k of ['skinOuter', 'skinInner']) {
     const skin = String(p.props[k] ?? 'none');
-    if (skin !== 'none') m += span * len * skinT * getMaterial(skin).density;
+    if (skin !== 'none') m += area * skinT * getMaterial(skin).density;
   }
   return m;
 }

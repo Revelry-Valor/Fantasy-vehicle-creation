@@ -281,7 +281,7 @@ export function drawHullSides(loop: P2[], opts: PenOptions): PartInstance | null
 export function isSegmentLike(p: PartInstance): boolean {
   const def = getDef(p.type);
   if (def.compartment || p.type === 'hullSides' || p.type === 'hullShell') return false;
-  if (p.type === 'deck' && p.points) return false;
+  if (isSheet(p) && p.points) return false;
   if (p.props.pen || def.conduit || p.type === 'frame' || p.type === 'deck') return true;
   return !!def.structural && p.size[2] >= Math.max(p.size[0], p.size[1]);
 }
@@ -314,7 +314,45 @@ export function moveEndpoint(p: PartInstance, end: 0 | 1, to: Vec3): Pick<PartIn
   };
 }
 
-// ── Floor outlines ──────────────────────────────────────────────────────────
+// ── Sheet outlines (floors and framing) ─────────────────────────────────────
+
+/** Floors and framing are flat sheets whose outline can be reshaped corner by corner. */
+export function isSheet(p: PartInstance): boolean {
+  return p.type === 'deck' || p.type === 'frame';
+}
+
+/** A sheet's face normal (its local +Y) in world space. */
+export function sheetNormal(p: PartInstance): Vec3 {
+  const m = rotationMatrix(p.rotation);
+  return [m[1], m[4], m[7]];
+}
+
+/** True when the view looks roughly straight at the sheet, so its outline can be edited there. */
+export function facesView(p: PartInstance, view: PlaneView): boolean {
+  const n = sheetNormal(p);
+  return Math.abs(view === 'top' ? n[1] : n[0]) > 0.35;
+}
+
+/**
+ * The point on a sheet's middle plane that sits under/behind a point in the
+ * view (found along the view's out-of-plane axis), in the sheet's local X/Z.
+ */
+export function planeToSheetLocal(p: PartInstance, view: PlaneView, q: P2): [number, number] {
+  const n = sheetNormal(p);
+  const c = p.position;
+  let w: Vec3;
+  if (view === 'top') {
+    // (u, v) = (z, x); solve for y on the plane.
+    const y = c[1] - (n[0] * (q.v - c[0]) + n[2] * (q.u - c[2])) / n[1];
+    w = [q.v, y, q.u];
+  } else {
+    // (u, v) = (z, y); solve for x on the plane.
+    const x = c[0] - (n[1] * (q.v - c[1]) + n[2] * (q.u - c[2])) / n[0];
+    w = [x, q.v, q.u];
+  }
+  const l = worldToLocal(p, w);
+  return [l[0], l[2]];
+}
 
 /** A floor's outline in its own X/Z plane, corner by corner. Plain floors are rectangles. */
 export function deckOutline(p: PartInstance): [number, number][] {
@@ -346,9 +384,10 @@ export function withDeckOutline(p: PartInstance, outline: [number, number][]): P
   };
 }
 
-/** Floor corners in world space. */
+/** Sheet corners in world space (top face of a floor, middle of a framing sheet). */
 export function deckCorners(p: PartInstance): Vec3[] {
-  return deckOutline(p).map(([x, z]) => localToWorld(p, [x, p.size[1] / 2, z]));
+  const y = p.type === 'deck' ? p.size[1] / 2 : 0;
+  return deckOutline(p).map(([x, z]) => localToWorld(p, [x, y, z]));
 }
 
 // ── Layers ──────────────────────────────────────────────────────────────────

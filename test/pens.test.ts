@@ -118,3 +118,31 @@ describe('shaped floors', () => {
     expect(Math.min(...zs)).toBeCloseTo(0);
   });
 });
+
+describe('shaped framing', () => {
+  test('a roof sheet can be cut to a point from the top plan', async () => {
+    const { deckOutline, facesView, planeToSheetLocal, withDeckOutline, deckCorners } = await import('../src/core/pens');
+    const { dryMass } = await import('../src/core/analysis');
+    // Roof drawn right-to-left in the side profile, 4 m wide, 6 m long at y = 3.
+    const [roof] = drawFraming('side', [{ u: 3, v: 3 }, { u: -3, v: 3 }], opts);
+    expect(facesView(roof, 'top')).toBe(true);
+    expect(facesView(roof, 'side')).toBe(false);
+    const full = dryMass(roof);
+    // Pull the two bow corners together at the centre line: a pointed roof.
+    const corners = deckCorners(roof);
+    const bow = corners.map((w, i) => ({ w, i })).filter(({ w }) => w[2] > 2.9).map(({ i }) => i);
+    const outline = deckOutline(roof);
+    for (const i of bow) outline[i] = planeToSheetLocal(roof, 'top', { u: 3, v: 0 });
+    const pointed = { ...roof, ...withDeckOutline(roof, outline) };
+    const ys = deckCorners(pointed).map((w) => w[1]);
+    ys.forEach((y) => expect(y).toBeCloseTo(3));
+    expect(dryMass(pointed) / full).toBeCloseTo(0.5, 2);
+  });
+
+  test('top-plan walls are shaped from the side profile', async () => {
+    const { facesView } = await import('../src/core/pens');
+    const [wall] = drawFraming('top', [{ u: 0, v: 1 }, { u: 3, v: 1 }], { ...opts, ceilingHeight: 2.4 }, 1);
+    expect(facesView(wall, 'side')).toBe(true);
+    expect(facesView(wall, 'top')).toBe(false);
+  });
+});

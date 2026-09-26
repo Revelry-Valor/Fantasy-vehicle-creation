@@ -91,6 +91,19 @@ function pivot(x: number, y: number, z: number, ...children: THREE.Object3D[]) {
   return g;
 }
 
+/** A flat slab cut to an outline given in local X/Z, `thickness` thick, centred at height y. */
+function outlineSlab(points: number[], thickness: number, y: number, mat: THREE.Material): THREE.Mesh {
+  const shape = new THREE.Shape();
+  for (let i = 0; i + 2 < points.length; i += 3) {
+    if (i === 0) shape.moveTo(points[i], points[i + 2]);
+    else shape.lineTo(points[i], points[i + 2]);
+  }
+  const geo = new THREE.ExtrudeGeometry(shape, { depth: thickness, bevelEnabled: false });
+  geo.rotateX(Math.PI / 2);
+  geo.translate(0, y + thickness / 2, 0);
+  return mesh(geo, mat);
+}
+
 // ── Builders ─────────────────────────────────────────────────────────────────
 type Built = { group: THREE.Group; unit: boolean; anim?: AnimHandle };
 
@@ -163,18 +176,7 @@ function build(p: PartInstance, M: Mats): Built {
   const state = Number(p.props.state ?? 0);
   switch (def.shape) {
     case 'box': {
-      if (p.type === 'deck' && p.points && p.points.length >= 9) {
-        // A floor with a hand-shaped outline.
-        const shape = new THREE.Shape();
-        for (let i = 0; i + 2 < p.points.length; i += 3) {
-          if (i === 0) shape.moveTo(p.points[i], p.points[i + 2]);
-          else shape.lineTo(p.points[i], p.points[i + 2]);
-        }
-        const geo = new THREE.ExtrudeGeometry(shape, { depth: H, bevelEnabled: false });
-        geo.rotateX(Math.PI / 2);
-        geo.translate(0, H / 2, 0);
-        return real(mesh(geo, M.main));
-      }
+      if (p.type === 'deck' && p.points && p.points.length >= 9) return real(outlineSlab(p.points, H, 0, M.main));
       return unit(box(1, 1, 1, M.main));
     }
     case 'tube': {
@@ -266,7 +268,8 @@ function build(p: PartInstance, M: Mats): Built {
       // A thin sheet of planking or metal, with optional plating on either face.
       const g = new THREE.Group();
       M.main.userData.panel = true;
-      g.add(box(W, H, D, M.main));
+      const shaped = p.points && p.points.length >= 9;
+      g.add(shaped ? outlineSlab(p.points!, H, 0, M.main) : box(W, H, D, M.main));
       const t = Number(p.props.skinThickness ?? 0.02);
       const s = Number(p.props.outSign ?? 1) >= 0 ? 1 : -1;
       for (const [key, side] of [['skinOuter', s], ['skinInner', -s]] as const) {
@@ -275,7 +278,8 @@ function build(p: PartInstance, M: Mats): Built {
         const sm = getMaterial(matId);
         const mat = std(sm.color, sm.metalness, sm.roughness, sm.transparent ? { transparent: true, opacity: 0.45 } : {});
         mat.userData.skin = true;
-        g.add(box(W, t, D, mat, 0, side * (H / 2 + t / 2), 0));
+        const y = side * (H / 2 + t / 2);
+        g.add(shaped ? outlineSlab(p.points!, t, y, mat) : box(W, t, D, mat, 0, y, 0));
       }
       return real(g);
     }

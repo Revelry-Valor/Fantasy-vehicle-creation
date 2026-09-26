@@ -3,7 +3,7 @@ import { getDef } from '../core/catalog';
 import { FLUIDS, getFluid } from '../core/fluids';
 import { partVolume } from '../core/geometry';
 import { MATERIALS } from '../core/materials';
-import { deckOutline } from '../core/pens';
+import { deckOutline, facesView } from '../core/pens';
 import type { Store } from '../core/store';
 import type { PartInstance, Vec3 } from '../core/types';
 import { h, clear, fmt, num } from './dom';
@@ -102,6 +102,11 @@ export class InspectorPanel {
         h('select', { onchange: (e) => setProp('skinInner', (e.target as HTMLSelectElement).value) }, skinOpts(String(p.props.skinInner ?? 'none')))));
       rows.push(num('Armor', Number(p.props.skinThickness ?? 0.03) * 1000, (v) => setProp('skinThickness', Math.max(0.5, v) / 1000), { step: 1, min: 0.5, unit: 'mm' }));
       rows.push(h('button', { class: 'wide', onclick: () => setProp('outSign', Number(p.props.outSign ?? 1) >= 0 ? -1 : 1) }, '⇅ Swap outside and inside'));
+      const where = facesView(p, 'top') ? 'the top plan' : facesView(p, 'side') ? 'the side profile' : '';
+      rows.push(h('p', { class: 'hint' }, p.points
+        ? `Shaped sheet, ${deckOutline(p).length} corners.${where ? ` In ${where}: drag corners, drag a + to add one, double-click a corner to remove it.` : ''}`
+        : where ? `To reshape: select it in ${where}, drag its corners or pull a + on an edge to add a corner.` : 'This sheet is edge-on in both views; drag its end dots to change its length.'));
+      if (p.points) rows.push(h('button', { class: 'wide', onclick: () => up({ points: undefined, size: p.size }) }, '▭ Reset to a rectangle'));
     }
     if (p.type === 'deck') {
       rows.push(h('p', { class: 'hint' }, p.points

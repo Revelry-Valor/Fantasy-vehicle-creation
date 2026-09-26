@@ -45,14 +45,19 @@ there's also a button to swap which face counts as the outside. Sheets and
 floors are treated as held along their long edges, so they span the short
 way.
 
-**Shaping floors:** select a floor in the top plan.
+**Shaping floors and framing:** select a floor or framing sheet in a view
+that looks straight at it. That's the top plan for floors, roofs, bellies
+and sloped sections, and the side profile for walls drawn in the top plan.
 - Drag a **corner** (square handle) to move it.
 - Drag the **+** in the middle of an edge to pull out a new corner.
 - Double-click a corner to remove it. For example, a square becomes a
   triangle.
 
-Weight and area follow the real shape. *Reset to a rectangle* in the
-inspector undoes the shaping.
+Weight and area follow the real shape, armor plating included. Sloped
+sheets stay flat on their own slope while you move corners in the plan.
+Mirrored twins reshape together. *Reset to a rectangle* in the inspector
+undoes the shaping. A sheet seen edge-on (for example a roof in the side
+profile) still shows its two end dots for changing length and angle.
 
 **Snapping:** pens and drags snap to the ends of other parts (yellow circle),
 to the surfaces of parts (green diamond), line up with existing points

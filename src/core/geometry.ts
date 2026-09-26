@@ -173,7 +173,7 @@ export function outlineAreaXZ(points: number[]): number {
 
 export function partVolume(p: PartInstance): number {
   // A floor with a drawn outline: outline area × thickness.
-  if (p.type === 'deck' && p.points && p.points.length >= 9) return outlineAreaXZ(p.points) * p.size[1];
+  if ((p.type === 'deck' || p.type === 'frame') && p.points && p.points.length >= 9) return outlineAreaXZ(p.points) * p.size[1];
   if ((p.type === 'hullShell' || p.type === 'hullSides') && typeof p.props.volume === 'number') return p.props.volume;
   return shapeVolume(getDef(p.type).shape, p.size);
 }
