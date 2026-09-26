@@ -2,8 +2,8 @@ import { getDef } from '../core/catalog';
 import { localToWorld } from '../core/geometry';
 import { getMaterial } from '../core/materials';
 import {
-  DEFAULT_PEN_OPTIONS, drawFloor, drawFraming, drawHullSides, drawRoom, drawSupport, endpoints, floorTypeOf,
-  isSegmentLike, layerOf, moveEndpoint, outwardSign, outOfPlane, resolveLayers, toPlane, toWorld,
+  DEFAULT_PEN_OPTIONS, deckCorners, deckOutline, drawFloor, drawFraming, drawHullSides, drawRoom, drawSupport, endpoints, floorTypeOf,
+  isSegmentLike, layerOf, moveEndpoint, outwardSign, outOfPlane, resolveLayers, toPlane, toWorld, withDeckOutline, worldToLocal,
   type P2, type PenKind, type PenOptions, type PlaneView, type ResolvedLayer,
 } from '../core/pens';
 import type { Store } from '../core/store';
@@ -25,7 +25,7 @@ type Drag =
   | { kind: 'pan'; sx: number; sy: number; u: number; v: number }
   | { kind: 'body'; start: P2; orig: Map<string, Vec3>; moved: boolean; anchor: P2[] }
   | { kind: 'end'; targets: { id: string; end: 0 | 1 }[]; moved: boolean }
-  | { kind: 'width'; id: string; moved: boolean }
+  | { kind: 'vertex'; id: string; index: number; moved: boolean }
   | { kind: 'marquee'; start: P2; now: P2; additive: boolean };
 
 interface Snap {
@@ -69,6 +69,7 @@ export class Blueprint {
   private hover: Snap | null = null;
   private hoverPart: string | null = null;
   private hoverHandle: { id: string; end: 0 | 1 } | null = null;
+  private hoverOutline: { id: string; index: number; kind: 'corner' | 'edge' } | null = null;
   private drag: Drag | null = null;
   private spaceDown = false;
   private shiftDown = false;
@@ -202,7 +203,7 @@ export class Blueprint {
       const poly = this.project(p);
       const min = { u: Math.min(...poly.map((q) => q.u)), v: Math.min(...poly.map((q) => q.v)) };
       const max = { u: Math.max(...poly.map((q) => q.u)), v: Math.max(...poly.map((q) => q.v)) };
-      const ends = isSegmentLike(p) ? (endpoints(p).map((w) => toPlane(this.view, w)) as [P2, P2]) : null;
+      const ends = isSegmentLike(p) && !(this.view === 'top' && p.type === 'deck') ? (endpoints(p).map((w) => toPlane(this.view, w)) as [P2, P2]) : null;
       // Draw far things first. Side view looks from −X; top view from above.
       const depth = this.view === 'side' ? -p.position[0] : p.position[1];
       out.push({ part: p, poly, min, max, ends, depth, dim });
@@ -216,6 +217,7 @@ export class Blueprint {
   }
 
   private project(p: PartInstance): P2[] {
+    if (p.type === 'deck' && p.points && this.view === 'top') return deckCorners(p).map((w) => toPlane(this.view, w));
     if (p.type === 'hullSides' && this.view === 'side' && p.points) {
       const out: P2[] = [];
       for (let i = 0; i + 2 < p.points.length; i += 3) out.push({ u: p.position[2] + p.points[i + 2], v: p.position[1] + p.points[i + 1] });
@@ -362,19 +364,53 @@ export class Blueprint {
     return best;
   }
 
-  private widthHandleAt(p: P2): string | null {
-    if (this.view !== 'top') return null;
-    const r = (SNAP_PX - 2) / this.cam.scale;
+  /** Corner and edge-midpoint handles of the selected floors (top plan only). */
+  private outlineHandles(): { id: string; index: number; kind: 'corner' | 'edge'; p: P2 }[] {
+    if (this.view !== 'top' || this.tool !== 'select') return [];
+    const out: { id: string; index: number; kind: 'corner' | 'edge'; p: P2 }[] = [];
     for (const id of this.store.selection) {
       const part = this.store.get(id);
       if (!part || part.type !== 'deck') continue;
-      for (const w of this.widthHandles(part)) if (Math.hypot(w.u - p.u, w.v - p.v) < r) return id;
+      const c = deckCorners(part).map((w) => toPlane(this.view, w));
+      c.forEach((q, i) => {
+        out.push({ id, index: i, kind: 'corner', p: q });
+        const n = c[(i + 1) % c.length];
+        out.push({ id, index: i, kind: 'edge', p: { u: (q.u + n.u) / 2, v: (q.v + n.v) / 2 } });
+      });
     }
-    return null;
+    return out;
   }
 
-  private widthHandles(p: PartInstance): P2[] {
-    return [toPlane(this.view, localToWorld(p, [p.size[0] / 2, 0, 0])), toPlane(this.view, localToWorld(p, [-p.size[0] / 2, 0, 0]))];
+  private outlineHandleAt(p: P2) {
+    const r = (SNAP_PX - 2) / this.cam.scale;
+    let best: ReturnType<Blueprint['outlineHandles']>[number] | null = null, bestD = r;
+    for (const h of this.outlineHandles()) {
+      // Corners win over edge "+" handles when they overlap.
+      const d = Math.hypot(h.p.u - p.u, h.p.v - p.v) - (h.kind === 'corner' ? 1e-3 : 0);
+      if (d < bestD) { bestD = d; best = h; }
+    }
+    return best;
+  }
+
+  private setOutline(id: string, outline: [number, number][]) {
+    const part = this.store.get(id);
+    if (!part) return;
+    this.store.updatePart(id, withDeckOutline(part, outline), false);
+  }
+
+  /** Double-click a floor corner to remove it (a square becomes a triangle). */
+  private removeCorner(p: P2): boolean {
+    const h = this.outlineHandleAt(p);
+    if (!h || h.kind !== 'corner') return false;
+    const part = this.store.get(h.id)!;
+    const outline = deckOutline(part);
+    if (outline.length <= 3) { this.onStatus('A floor needs at least three corners.'); return true; }
+    this.store.snapshot();
+    outline.splice(h.index, 1);
+    this.setOutline(h.id, outline);
+    this.store.emit('change');
+    this.onStatus(`Corner removed — ${outline.length} corners left.`);
+    return true;
   }
 
   // ── Events ────────────────────────────────────────────────────────────────
@@ -396,7 +432,10 @@ export class Blueprint {
     c.addEventListener('pointerdown', (e) => this.onDown(e));
     c.addEventListener('pointermove', (e) => this.onMove(e));
     c.addEventListener('pointerup', (e) => this.onUp(e));
-    c.addEventListener('dblclick', () => { if (this.tool === 'pen' && this.pen === 'frame') this.finishChain(); });
+    c.addEventListener('dblclick', (e) => {
+      if (this.tool === 'pen' && this.pen === 'frame') this.finishChain();
+      else if (this.tool === 'select') this.removeCorner(this.eventPoint(e));
+    });
     c.addEventListener('pointerleave', () => { this.hover = null; this.invalidate(); });
     window.addEventListener('keydown', (e) => {
       if (e.key === ' ' && this.visible && !isTyping(e)) { this.spaceDown = true; this.canvas.style.cursor = 'grab'; e.preventDefault(); }
@@ -449,10 +488,20 @@ export class Blueprint {
       return;
     }
     // Select tool
-    const w = this.widthHandleAt(p);
-    if (w) {
+    const oh = this.outlineHandleAt(p);
+    if (oh) {
       this.store.snapshot();
-      this.drag = { kind: 'width', id: w, moved: false };
+      let index = oh.index;
+      if (oh.kind === 'edge') {
+        // Grab the "+" on an edge to add a corner there.
+        const part = this.store.get(oh.id)!;
+        const outline = deckOutline(part);
+        const a = outline[oh.index], b = outline[(oh.index + 1) % outline.length];
+        index = oh.index + 1;
+        outline.splice(index, 0, [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2]);
+        this.setOutline(oh.id, outline);
+      }
+      this.drag = { kind: 'vertex', id: oh.id, index, moved: oh.kind === 'edge' };
       return;
     }
     const h = this.handleAt(p);
@@ -507,7 +556,7 @@ export class Blueprint {
     if (d?.kind === 'marquee') { d.now = raw; this.invalidate(); return; }
     if (d?.kind === 'body') return this.dragBody(d, raw);
     if (d?.kind === 'end') return this.dragEnd(d, raw, e.altKey);
-    if (d?.kind === 'width') return this.dragWidth(d, raw);
+    if (d?.kind === 'vertex') return this.dragVertex(d, raw, e.altKey);
 
     if (this.tool === 'pen') {
       this.hover = this.penSnap(raw, e.shiftKey);
@@ -517,12 +566,15 @@ export class Blueprint {
     } else {
       this.hover = null;
       const h = this.handleAt(raw);
-      const w = this.widthHandleAt(raw);
+      const oh = this.outlineHandleAt(raw);
       this.hoverHandle = h;
+      this.hoverOutline = oh ? { id: oh.id, index: oh.index, kind: oh.kind } : null;
       const id = h ? h.id : this.partAt(raw);
       this.hoverPart = id;
-      this.canvas.style.cursor = this.spaceDown ? 'grab' : h || w ? 'move' : id ? 'pointer' : 'default';
-      if (h) this.onStatus('Drag to move this end only · Shift-drag moves every end joined here');
+      this.canvas.style.cursor = this.spaceDown ? 'grab' : h || oh ? 'move' : id ? 'pointer' : 'default';
+      if (oh?.kind === 'corner') this.onStatus('Drag to move this corner · double-click to remove it');
+      else if (oh) this.onStatus('Drag to add a corner here and shape the floor');
+      else if (h) this.onStatus('Drag to move this end only · Shift-drag moves every end joined here');
       else if (id) {
         const p = this.store.get(id)!;
         this.onStatus(`${p.name || getDef(p.type).name} — drag to move · Shift-click to add to selection`);
@@ -601,15 +653,19 @@ export class Blueprint {
     this.onStatus(`Length ${len.toFixed(2)} m · Shift = 15° steps · Alt = no snapping`);
   }
 
-  private dragWidth(d: Extract<Drag, { kind: 'width' }>, raw: P2) {
+  private dragVertex(d: Extract<Drag, { kind: 'vertex' }>, raw: P2, free: boolean) {
     const part = this.store.get(d.id);
     if (!part) return;
-    const c = toPlane(this.view, part.position);
-    let half = Math.abs(raw.v - c.v);
-    if (this.snapStep) half = Math.max(this.snapStep / 2, Math.round((half * 2) / this.snapStep) * this.snapStep / 2);
+    const s = this.snap(raw, { exclude: new Set([d.id]) });
+    this.hover = s;
+    const to = free ? raw : s.p;
+    const corner = deckCorners(part)[d.index];
+    const local = worldToLocal(part, toWorld(this.view, to, corner[1]));
+    const outline = deckOutline(part);
+    outline[d.index] = [local[0], local[2]];
     d.moved = true;
-    this.store.updatePart(d.id, { size: [half * 2, part.size[1], part.size[2]] }, false);
-    this.onStatus(`Width ${(half * 2).toFixed(2)} m`);
+    this.setOutline(d.id, outline);
+    this.onStatus(`Corner at (${to.u.toFixed(2)}, ${to.v.toFixed(2)}) m · Alt = no snapping`);
   }
 
   // ── Pens ──────────────────────────────────────────────────────────────────
@@ -758,14 +814,25 @@ export class Blueprint {
           if (isSel || hot) { ctx.strokeStyle = '#0b1a2a'; ctx.lineWidth = 1.5; ctx.stroke(); }
         }
       }
-      for (const id of this.store.selection) {
-        const part = this.store.get(id);
-        if (part?.type === 'deck' && this.view === 'top') {
-          for (const w of this.widthHandles(part)) {
-            const q = this.toScreen(w);
-            ctx.fillStyle = '#5fb4ff';
-            ctx.fillRect(q.x - 5, q.y - 5, 10, 10);
-          }
+      for (const oh of this.outlineHandles()) {
+        const q = this.toScreen(oh.p);
+        const hot = this.hoverOutline && this.hoverOutline.id === oh.id && this.hoverOutline.index === oh.index && this.hoverOutline.kind === oh.kind;
+        if (oh.kind === 'corner') {
+          ctx.fillStyle = hot ? '#ffd35a' : '#5fb4ff';
+          ctx.fillRect(q.x - 5, q.y - 5, 10, 10);
+          ctx.strokeStyle = '#0b1a2a';
+          ctx.lineWidth = 1.5;
+          ctx.strokeRect(q.x - 5, q.y - 5, 10, 10);
+        } else {
+          ctx.beginPath();
+          ctx.arc(q.x, q.y, hot ? 7 : 5, 0, Math.PI * 2);
+          ctx.fillStyle = hot ? 'rgba(255,211,90,0.9)' : 'rgba(95,180,255,0.55)';
+          ctx.fill();
+          ctx.strokeStyle = '#0b1a2a';
+          ctx.lineWidth = 1.5;
+          ctx.beginPath();
+          ctx.moveTo(q.x - 3, q.y); ctx.lineTo(q.x + 3, q.y); ctx.moveTo(q.x, q.y - 3); ctx.lineTo(q.x, q.y + 3);
+          ctx.stroke();
         }
       }
     }

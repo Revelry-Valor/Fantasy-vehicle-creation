@@ -86,21 +86,14 @@ export function contentsMass(p: PartInstance, fill: number): number {
 }
 
 /** Dry (structural) mass of a part, kg. */
-/** Width of each rail in a framing section, m. */
-export function frameRailWidth(p: PartInstance): number {
-  return Math.min(0.15, Math.max(0.05, p.size[0] * 0.04));
-}
-
+/** A framing section is a thin sheet (planking or metal plate) plus any plating on its faces. */
 function frameMass(p: PartInstance): number {
-  const [span, depth, len] = p.size;
-  const rail = frameRailWidth(p);
-  const rho = getMaterial(p.material).density;
-  const ties = Math.floor(len) + 1;
-  let m = (2 * rail * depth * len + ties * span * depth * 0.6 * 0.08) * rho;
-  const t = Number(p.props.skinThickness ?? 0.03);
+  const [span, t, len] = p.size;
+  let m = span * t * len * getMaterial(p.material).density;
+  const skinT = Number(p.props.skinThickness ?? 0.03);
   for (const k of ['skinOuter', 'skinInner']) {
     const skin = String(p.props[k] ?? 'none');
-    if (skin !== 'none') m += span * len * t * getMaterial(skin).density;
+    if (skin !== 'none') m += span * len * skinT * getMaterial(skin).density;
   }
   return m;
 }
@@ -141,9 +134,13 @@ export function memberCapacity(p: PartInstance): number {
   const sigma = getMaterial(p.material).strength * 1e6;
   const d = [...p.size].sort((a, b) => a - b);
   if (p.type === 'frame') {
-    const rail = frameRailWidth(p);
-    const depth = p.size[1];
-    return 2 * (4 * sigma * ((rail * depth * depth) / 6)) / Math.max(p.size[2], 0.1);
+    // A sheet held along its long edges bends across the short direction
+    // under a spread-out load (M = wL²/8), so capacity = 8σS/L.
+    const [span, t, len] = p.size;
+    const skinT = ['skinOuter', 'skinInner'].some((k) => String(p.props[k] ?? 'none') !== 'none') ? Number(p.props.skinThickness ?? 0.03) : 0;
+    const depth = t + skinT;
+    const short = Math.min(span, len), long = Math.max(span, len);
+    return (8 * sigma * ((long * depth * depth) / 6)) / Math.max(short, 0.1);
   }
   if (def.massMode === 'shell') {
     const t = typeof p.props.thickness === 'number' ? p.props.thickness : 0.02;
@@ -156,7 +153,8 @@ export function memberCapacity(p: PartInstance): number {
     S = (t * t * t) / 6;
     L = p.size[0] * 1.5;
   } else if (d[1] / d[0] > 4) {
-    S = (d[1] * d[0] * d[0]) / 6;
+    // Plates and floors: supported along the long edges, spanning the short way.
+    return (8 * sigma * ((d[2] * d[0] * d[0]) / 6)) / Math.max(d[1], 0.1);
   } else {
     S = ((d[0] * d[1] * d[1]) / 6) * Math.sqrt(def.fill ?? 1);
   }

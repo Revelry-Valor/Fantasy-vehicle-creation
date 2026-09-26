@@ -167,7 +167,7 @@ export class Store {
       if (patch.size) p.size = patch.size.map((s) => Math.max(0.005, s)) as Vec3;
       if (patch.material) p.material = patch.material;
       if (patch.name !== undefined) p.name = patch.name;
-      if (patch.points) p.points = patch.points;
+      if ('points' in patch) p.points = patch.points;
       if (patch.props) Object.assign(p.props, patch.props);
       const t = this.twin(p);
       if (t) {
@@ -178,7 +178,7 @@ export class Store {
         t.size = [...p.size] as Vec3;
         t.material = p.material;
         if (patch.props) Object.assign(t.props, patch.props);
-        if (patch.points) t.points = p.points!.map((v, i) => (i % 3 === 0 ? -v : v));
+        if ('points' in patch) t.points = p.points?.map((v, i) => (i % 3 === 0 ? -v : v));
       }
     };
     if (record) this.commit(apply);

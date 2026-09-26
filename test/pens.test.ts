@@ -93,3 +93,28 @@ describe('editing', () => {
     expect(s.design.layers).toEqual([]);
   });
 });
+
+describe('shaped floors', () => {
+  test('dragging a corner onto its neighbour turns a square into a triangle', async () => {
+    const { deckOutline, withDeckOutline } = await import('../src/core/pens');
+    const { dryMass } = await import('../src/core/analysis');
+    const [f] = drawFloor('top', { u: 0, v: 0 }, { u: 4, v: 4 }, opts, 1);
+    const square = dryMass(f);
+    const outline = deckOutline(f);
+    outline.splice(2, 1); // drop one corner
+    const tri = { ...f, ...withDeckOutline(f, outline) };
+    expect(deckOutline(tri)).toHaveLength(3);
+    expect(dryMass(tri) / square).toBeCloseTo(0.5, 2);
+  });
+
+  test('corners come back in world space after re-centring', async () => {
+    const { deckCorners, deckOutline, withDeckOutline } = await import('../src/core/pens');
+    const [f] = drawFloor('top', { u: 0, v: 0 }, { u: 4, v: 2 }, opts, 1);
+    const outline = deckOutline(f);
+    outline.splice(3, 0, [0, 3]); // pull a new corner out of the +z (bow) edge
+    const shaped = { ...f, ...withDeckOutline(f, outline) };
+    const zs = deckCorners(shaped).map((w) => w[2]);
+    expect(Math.max(...zs)).toBeCloseTo(5);
+    expect(Math.min(...zs)).toBeCloseTo(0);
+  });
+});

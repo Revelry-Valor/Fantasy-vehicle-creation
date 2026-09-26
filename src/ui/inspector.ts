@@ -3,6 +3,7 @@ import { getDef } from '../core/catalog';
 import { FLUIDS, getFluid } from '../core/fluids';
 import { partVolume } from '../core/geometry';
 import { MATERIALS } from '../core/materials';
+import { deckOutline } from '../core/pens';
 import type { Store } from '../core/store';
 import type { PartInstance, Vec3 } from '../core/types';
 import { h, clear, fmt, num } from './dom';
@@ -91,17 +92,22 @@ export class InspectorPanel {
       rows.push(h('label', { class: 'field check' }, h('input', { type: 'checkbox', checked: p.props.sealed === true, onchange: (e) => setProp('sealed', (e.target as HTMLInputElement).checked) }), h('span', {}, 'Sealed / pressurised')));
     }
     if (p.type === 'frame') {
-      const skinOpts = (cur: string) => [h('option', { value: 'none', selected: cur === 'none' }, 'None (open frame)'),
+      const skinOpts = (cur: string) => [h('option', { value: 'none', selected: cur === 'none' }, 'None'),
         ...MATERIALS.map((m) => h('option', { value: m.id, selected: m.id === cur }, `${m.name}${m.fantasy ? ' ✦' : ''}`))];
-      rows.push(h('div', { class: 'section-title' }, 'Plating & armor'));
+      rows.push(h('div', { class: 'section-title' }, 'Sheet & armor'));
+      rows.push(num('Sheet', p.size[1] * 1000, (v) => up({ size: [p.size[0], Math.max(0.5, v) / 1000, p.size[2]] }), { step: 1, min: 0.5, unit: 'mm' }));
       rows.push(h('label', { class: 'field' }, h('span', {}, 'Outside face'),
         h('select', { onchange: (e) => setProp('skinOuter', (e.target as HTMLSelectElement).value) }, skinOpts(String(p.props.skinOuter ?? 'none')))));
       rows.push(h('label', { class: 'field' }, h('span', {}, 'Inside face'),
         h('select', { onchange: (e) => setProp('skinInner', (e.target as HTMLSelectElement).value) }, skinOpts(String(p.props.skinInner ?? 'none')))));
-      rows.push(num('Plating', Number(p.props.skinThickness ?? 0.03) * 1000, (v) => setProp('skinThickness', Math.max(0.5, v) / 1000), { step: 1, min: 0.5, unit: 'mm' }));
+      rows.push(num('Armor', Number(p.props.skinThickness ?? 0.03) * 1000, (v) => setProp('skinThickness', Math.max(0.5, v) / 1000), { step: 1, min: 0.5, unit: 'mm' }));
       rows.push(h('button', { class: 'wide', onclick: () => setProp('outSign', Number(p.props.outSign ?? 1) >= 0 ? -1 : 1) }, '⇅ Swap outside and inside'));
     }
     if (p.type === 'deck') {
+      rows.push(h('p', { class: 'hint' }, p.points
+        ? `Shaped floor, ${deckOutline(p).length} corners. In the top plan: drag corners, drag a + to add one, double-click a corner to remove it.`
+        : 'To reshape: select it in the top plan, drag its corners or pull a + on an edge to add a corner.'));
+      if (p.points) rows.push(h('button', { class: 'wide', onclick: () => up({ points: undefined, size: p.size }) }, '▭ Reset to a rectangle'));
       const isLayer = (this.store.design.layers ?? []).some((l) => l.floorId === p.id);
       rows.push(isLayer
         ? h('p', { class: 'hint' }, '▤ This floor is a layer.')

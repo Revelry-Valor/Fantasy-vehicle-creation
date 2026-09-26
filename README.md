@@ -35,12 +35,24 @@ real part, so it shows up in 3D with its weight and strength.
 | **Floor** | a horizontal line marking the walking surface, *Width* wide | a rectangle on the active layer |
 | **Floor + ceiling** | floor, ceiling *Ceiling height* above it, and the room between | same, as a rectangle |
 | **Supports** | beams and pillars, snapped to horizontal and vertical (Shift for any angle), placed against both side walls or on the centre line | vertical pillars (one click) or horizontal beams under the deck |
-| **Framing** | the outline of the craft, point by point. Each section spans the width. Click the first point again to close the loop and seal the hull | walls standing on the active layer |
+| **Framing** | the outline of the craft, point by point, in thin planking or metal sheet. Each section spans the width. Click the first point again to close the loop and seal the hull | walls standing on the active layer |
 
-Framing can carry plating or armor on its **outside** face, its **inside**
-face, or both, in any material and thickness. You can change these later in
-the inspector, where there's also a button to swap which face counts as the
-outside.
+Framing is thin sheet: pine, oak or skywood planking, or iron, steel,
+aluminium, bronze or mythril sheet. You set the thickness in millimetres.
+Each section can also carry armor on its **outside** face, its **inside**
+face, or both. You can change all of this later in the inspector, where
+there's also a button to swap which face counts as the outside. Sheets and
+floors are treated as held along their long edges, so they span the short
+way.
+
+**Shaping floors:** select a floor in the top plan.
+- Drag a **corner** (square handle) to move it.
+- Drag the **+** in the middle of an edge to pull out a new corner.
+- Double-click a corner to remove it. For example, a square becomes a
+  triangle.
+
+Weight and area follow the real shape. *Reset to a rectangle* in the
+inspector undoes the shaping.
 
 **Snapping:** pens and drags snap to the ends of other parts (yellow circle),
 to the surfaces of parts (green diamond), line up with existing points
@@ -56,8 +68,6 @@ above the cut is a dashed outline.
 - Drag a part to move it.
 - Drag one of its end dots to move **only that end of that one part**.
   Shift-drag an end to move every end that meets at that joint.
-- In the top plan, drag the square handles on a selected floor to change its
-  width.
 - Drag on empty space to box-select. Arrow keys nudge.
 
 **Navigation:** the mouse wheel zooms at the cursor. Right-drag, middle-drag

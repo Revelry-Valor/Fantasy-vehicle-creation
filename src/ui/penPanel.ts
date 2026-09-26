@@ -1,14 +1,14 @@
 import { MATERIALS } from '../core/materials';
-import { FLOOR_TYPES, SUPPORT_TYPES, type PenKind, type PenOptions } from '../core/pens';
+import { FLOOR_TYPES, FRAME_TYPES, SUPPORT_TYPES, type PenKind, type PenOptions } from '../core/pens';
 import type { Store } from '../core/store';
 import type { Blueprint } from '../render/blueprint';
 import { h, clear } from './dom';
 
 const PENS: { id: PenKind; name: string; key: string; hint: string }[] = [
-  { id: 'floor', name: 'Floor', key: '1', hint: 'Walkable decking. Side view: a horizontal line. Top view: a rectangle.' },
+  { id: 'floor', name: 'Floor', key: '1', hint: 'Walkable decking. Side view: a horizontal line. Top view: a rectangle. Select a floor in the top plan to drag its corners, pull out new corners from the + on each edge, or double-click a corner to remove it.' },
   { id: 'room', name: 'Floor + ceiling', key: '2', hint: 'A floor, a ceiling above it and the room (air volume) between.' },
   { id: 'support', name: 'Supports', key: '3', hint: 'Beams and pillars. Snaps to horizontal and vertical; hold Shift for any angle.' },
-  { id: 'frame', name: 'Framing', key: '4', hint: 'Draw the outline of the craft point by point. Plate either face with armor or planking. Close the loop to seal the hull.' },
+  { id: 'frame', name: 'Framing', key: '4', hint: 'Draw the outline of the craft point by point in thin planking or metal sheet. Add armor to either face if you like. Close the loop to seal the hull.' },
 ];
 
 /** Left-panel controls for the 2D blueprint: view, tools, pens, options and layers. */
@@ -31,7 +31,7 @@ export class PenPanel {
         h('select', { onchange: (e) => set(key, (e.target as HTMLSelectElement).value as never) },
           options.map((x) => h('option', { value: x.value, selected: x.value === o[key] }, x.label))));
     const mats = MATERIALS.filter((m) => m.id !== 'glass' && m.id !== 'rubber').map((m) => ({ value: m.id, label: `${m.name}${m.fantasy ? ' ✦' : ''}` }));
-    const skins = [{ value: 'none', label: 'None (open frame)' }, ...mats];
+    const skins = [{ value: 'none', label: 'None' }, ...mats];
     const side = bp.view === 'side';
 
     let options: (HTMLElement | null)[] = [];
@@ -62,11 +62,19 @@ export class PenPanel {
           break;
         case 'frame':
           options = [
-            select('Frame', 'frameMaterial', mats),
-            num('Frame depth', 'frameDepth', 'cm', 1, 100),
-            select('Outside', 'skinOuter', skins),
-            select('Inside', 'skinInner', skins),
-            num('Plating', 'skinThickness', 'mm', 1, 1000, 0.001),
+            h('label', { class: 'field' }, h('span', {}, 'Sheet'),
+              h('select', {
+                onchange: (e) => {
+                  const ft = FRAME_TYPES.find((f) => f.id === (e.target as HTMLSelectElement).value)!;
+                  o.frameMaterial = ft.material;
+                  o.frameDepth = ft.thickness;
+                  this.render();
+                },
+              }, FRAME_TYPES.map((f) => h('option', { value: f.id, selected: f.material === o.frameMaterial }, f.name)))),
+            num('Thickness', 'frameDepth', 'mm', 1, 1000, 0.001),
+            select('Armor outside', 'skinOuter', skins),
+            select('Armor inside', 'skinInner', skins),
+            o.skinOuter !== 'none' || o.skinInner !== 'none' ? num('Armor', 'skinThickness', 'mm', 1, 1000, 0.001) : null,
             side ? num('Width', 'width', 'm', 0.25) : num('Wall height', 'ceilingHeight', 'm', 0.1),
           ];
           break;

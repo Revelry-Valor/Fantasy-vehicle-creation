@@ -160,7 +160,20 @@ export function shapeArea(shape: Shape, [a, b, c]: Vec3): number {
   }
 }
 
+/** Area of a flat outline given as a flat [x, y, z, …] list, measured in the XZ plane. */
+export function outlineAreaXZ(points: number[]): number {
+  let a = 0;
+  const n = points.length / 3;
+  for (let i = 0; i < n; i++) {
+    const j = (i + 1) % n;
+    a += points[i * 3] * points[j * 3 + 2] - points[j * 3] * points[i * 3 + 2];
+  }
+  return Math.abs(a) / 2;
+}
+
 export function partVolume(p: PartInstance): number {
+  // A floor with a drawn outline: outline area × thickness.
+  if (p.type === 'deck' && p.points && p.points.length >= 9) return outlineAreaXZ(p.points) * p.size[1];
   if ((p.type === 'hullShell' || p.type === 'hullSides') && typeof p.props.volume === 'number') return p.props.volume;
   return shapeVolume(getDef(p.type).shape, p.size);
 }

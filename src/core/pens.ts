@@ -30,6 +30,20 @@ export const FLOOR_TYPES: FloorType[] = [
   { id: 'stone', name: 'Stone slabs', material: 'stone', thickness: 0.1 },
 ];
 
+/** Framing is thin sheet: planking or metal plate. */
+export const FRAME_TYPES: FloorType[] = [
+  { id: 'pine', name: 'Pine planking', material: 'pine', thickness: 0.04 },
+  { id: 'oak', name: 'Oak planking', material: 'oak', thickness: 0.05 },
+  { id: 'skywood', name: 'Skywood planking', material: 'skywood', thickness: 0.04 },
+  { id: 'bamboo', name: 'Bamboo lath', material: 'bamboo', thickness: 0.03 },
+  { id: 'iron', name: 'Iron sheet', material: 'iron', thickness: 0.006 },
+  { id: 'steel', name: 'Steel sheet', material: 'steel', thickness: 0.005 },
+  { id: 'aluminum', name: 'Aluminium sheet', material: 'aluminum', thickness: 0.004 },
+  { id: 'bronze', name: 'Bronze sheet', material: 'bronze', thickness: 0.005 },
+  { id: 'copper', name: 'Copper sheet', material: 'copper', thickness: 0.004 },
+  { id: 'mythril', name: 'Mythril sheet ✦', material: 'mythril', thickness: 0.003 },
+];
+
 export const SUPPORT_TYPES: { id: SupportType; name: string; part: string }[] = [
   { id: 'beam', name: 'Square beam', part: 'beam' },
   { id: 'ibeam', name: 'I-beam', part: 'ibeam' },
@@ -51,6 +65,7 @@ export interface PenOptions {
   supportPlacement: 'sides' | 'centre';
   /** Top view: draw horizontal beams or stand vertical pillars. */
   supportOrientation: 'beam' | 'pillar';
+  /** Framing sheet: material and thickness (see FRAME_TYPES). */
   frameMaterial: string;
   frameDepth: number;
   skinOuter: string;
@@ -67,9 +82,9 @@ export const DEFAULT_PEN_OPTIONS: PenOptions = {
   supportSize: 0.2,
   supportPlacement: 'sides',
   supportOrientation: 'pillar',
-  frameMaterial: 'oak',
-  frameDepth: 0.2,
-  skinOuter: 'oak',
+  frameMaterial: 'pine',
+  frameDepth: 0.04,
+  skinOuter: 'none',
   skinInner: 'none',
   skinThickness: 0.03,
 };
@@ -250,11 +265,11 @@ export function drawHullSides(loop: P2[], opts: PenOptions): PartInstance | null
   if (area < 0.01) return null;
   const us = pts.map((p) => p.u), vs = pts.map((p) => p.v);
   const cu = (Math.min(...us) + Math.max(...us)) / 2, cv = (Math.min(...vs) + Math.max(...vs)) / 2;
-  const skin = opts.skinOuter !== 'none' ? opts.skinOuter : opts.frameMaterial;
+  const skin = opts.frameMaterial;
   const p = part('hullSides', [0, cv, cu], [opts.width, Math.max(...vs) - Math.min(...vs), Math.max(...us) - Math.min(...us)], [0, 0, 0], skin);
   p.name = 'Hull sides';
   p.points = pts.flatMap((q) => [0, round(q.v - cv), round(q.u - cu)]);
-  p.props.thickness = opts.skinThickness;
+  p.props.thickness = opts.frameDepth;
   p.props.area = round(area);
   p.props.volume = round(area * opts.width);
   return p;
@@ -266,6 +281,7 @@ export function drawHullSides(loop: P2[], opts: PenOptions): PartInstance | null
 export function isSegmentLike(p: PartInstance): boolean {
   const def = getDef(p.type);
   if (def.compartment || p.type === 'hullSides' || p.type === 'hullShell') return false;
+  if (p.type === 'deck' && p.points) return false;
   if (p.props.pen || def.conduit || p.type === 'frame' || p.type === 'deck') return true;
   return !!def.structural && p.size[2] >= Math.max(p.size[0], p.size[1]);
 }
@@ -296,6 +312,43 @@ export function moveEndpoint(p: PartInstance, end: 0 | 1, to: Vec3): Pick<PartIn
     rotation: [e.x, e.y, e.z],
     size: [p.size[0], p.size[1], round(len)],
   };
+}
+
+// ── Floor outlines ──────────────────────────────────────────────────────────
+
+/** A floor's outline in its own X/Z plane, corner by corner. Plain floors are rectangles. */
+export function deckOutline(p: PartInstance): [number, number][] {
+  if (p.points && p.points.length >= 9) {
+    const out: [number, number][] = [];
+    for (let i = 0; i + 2 < p.points.length; i += 3) out.push([p.points[i], p.points[i + 2]]);
+    return out;
+  }
+  const hx = p.size[0] / 2, hz = p.size[2] / 2;
+  return [[-hx, -hz], [hx, -hz], [hx, hz], [-hx, hz]];
+}
+
+export function worldToLocal(p: PartInstance, w: Vec3): Vec3 {
+  const m = rotationMatrix(p.rotation);
+  const d: Vec3 = [w[0] - p.position[0], w[1] - p.position[1], w[2] - p.position[2]];
+  // Inverse of a rotation matrix is its transpose.
+  return [m[0] * d[0] + m[3] * d[1] + m[6] * d[2], m[1] * d[0] + m[4] * d[1] + m[7] * d[2], m[2] * d[0] + m[5] * d[1] + m[8] * d[2]];
+}
+
+/** Rebuild a floor from a new outline, re-centred so its bounding box stays tight. */
+export function withDeckOutline(p: PartInstance, outline: [number, number][]): Pick<PartInstance, 'position' | 'size' | 'points'> {
+  const xs = outline.map((q) => q[0]), zs = outline.map((q) => q[1]);
+  const minX = Math.min(...xs), maxX = Math.max(...xs), minZ = Math.min(...zs), maxZ = Math.max(...zs);
+  const mx = (minX + maxX) / 2, mz = (minZ + maxZ) / 2;
+  return {
+    position: localToWorld(p, [mx, 0, mz]).map(round) as Vec3,
+    size: [round(Math.max(0.01, maxX - minX)), p.size[1], round(Math.max(0.01, maxZ - minZ))],
+    points: outline.flatMap((q) => [round(q[0] - mx), 0, round(q[1] - mz)]),
+  };
+}
+
+/** Floor corners in world space. */
+export function deckCorners(p: PartInstance): Vec3[] {
+  return deckOutline(p).map(([x, z]) => localToWorld(p, [x, p.size[1] / 2, z]));
 }
 
 // ── Layers ──────────────────────────────────────────────────────────────────

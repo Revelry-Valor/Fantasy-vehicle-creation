@@ -162,7 +162,21 @@ function build(p: PartInstance, M: Mats): Built {
   const [W, H, D] = p.size;
   const state = Number(p.props.state ?? 0);
   switch (def.shape) {
-    case 'box': return unit(box(1, 1, 1, M.main));
+    case 'box': {
+      if (p.type === 'deck' && p.points && p.points.length >= 9) {
+        // A floor with a hand-shaped outline.
+        const shape = new THREE.Shape();
+        for (let i = 0; i + 2 < p.points.length; i += 3) {
+          if (i === 0) shape.moveTo(p.points[i], p.points[i + 2]);
+          else shape.lineTo(p.points[i], p.points[i + 2]);
+        }
+        const geo = new THREE.ExtrudeGeometry(shape, { depth: H, bevelEnabled: false });
+        geo.rotateX(Math.PI / 2);
+        geo.translate(0, H / 2, 0);
+        return real(mesh(geo, M.main));
+      }
+      return unit(box(1, 1, 1, M.main));
+    }
     case 'tube': {
       const g = unit(cyl(0.5, 1, M.main, 'z', 0, 0, 0, 16));
       if (def.container) g.group.add(cyl(0.505, 0.04, M.fluid, 'z', 0, 0, 0.3, 16), cyl(0.505, 0.04, M.fluid, 'z', 0, 0, -0.3, 16));
@@ -249,15 +263,11 @@ function build(p: PartInstance, M: Mats): Built {
       return real(mesh(new ConvexGeometry(pts), M.main));
     }
     case 'frame': {
+      // A thin sheet of planking or metal, with optional plating on either face.
       const g = new THREE.Group();
-      const rail = Math.min(0.15, Math.max(0.05, W * 0.04));
-      g.add(box(rail, H, D, M.main, -W / 2 + rail / 2, 0, 0), box(rail, H, D, M.main, W / 2 - rail / 2, 0, 0));
-      const ties = Math.floor(D) + 1;
-      for (let i = 0; i < ties; i++) {
-        const z = ties === 1 ? 0 : -D / 2 + 0.04 + (i / (ties - 1)) * (D - 0.08);
-        g.add(box(W - 2 * rail, H * 0.6, 0.08, M.main, 0, 0, z));
-      }
-      const t = Number(p.props.skinThickness ?? 0.03);
+      M.main.userData.panel = true;
+      g.add(box(W, H, D, M.main));
+      const t = Number(p.props.skinThickness ?? 0.02);
       const s = Number(p.props.outSign ?? 1) >= 0 ? 1 : -1;
       for (const [key, side] of [['skinOuter', s], ['skinInner', -s]] as const) {
         const matId = String(p.props[key] ?? 'none');

@@ -335,6 +335,8 @@ export class Viewport {
         let op = Math.min(baseOpacity, opacity);
         // Plating on framing ghosts out so the structure and interior show through.
         if (m.userData.skin && this.view !== 'exterior') op = Math.min(op, this.view === 'structure' ? 0.07 : 0.12);
+        // Framing sheets stay readable in the structural view and ghost out inside.
+        if (m.userData.panel && this.view !== 'exterior') op = Math.min(op, this.view === 'structure' ? 0.5 : 0.12);
         const transparent = baseTransparent || op < 1;
         if (m.transparent !== transparent) { m.transparent = transparent; m.needsUpdate = true; }
         m.opacity = op;
