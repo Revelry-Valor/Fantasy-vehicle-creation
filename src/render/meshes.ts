@@ -248,6 +248,47 @@ function build(p: PartInstance, M: Mats): Built {
       M.main.side = THREE.DoubleSide;
       return real(mesh(new ConvexGeometry(pts), M.main));
     }
+    case 'frame': {
+      const g = new THREE.Group();
+      const rail = Math.min(0.15, Math.max(0.05, W * 0.04));
+      g.add(box(rail, H, D, M.main, -W / 2 + rail / 2, 0, 0), box(rail, H, D, M.main, W / 2 - rail / 2, 0, 0));
+      const ties = Math.floor(D) + 1;
+      for (let i = 0; i < ties; i++) {
+        const z = ties === 1 ? 0 : -D / 2 + 0.04 + (i / (ties - 1)) * (D - 0.08);
+        g.add(box(W - 2 * rail, H * 0.6, 0.08, M.main, 0, 0, z));
+      }
+      const t = Number(p.props.skinThickness ?? 0.03);
+      const s = Number(p.props.outSign ?? 1) >= 0 ? 1 : -1;
+      for (const [key, side] of [['skinOuter', s], ['skinInner', -s]] as const) {
+        const matId = String(p.props[key] ?? 'none');
+        if (matId === 'none') continue;
+        const sm = getMaterial(matId);
+        const mat = std(sm.color, sm.metalness, sm.roughness, sm.transparent ? { transparent: true, opacity: 0.45 } : {});
+        mat.userData.skin = true;
+        g.add(box(W, t, D, mat, 0, side * (H / 2 + t / 2), 0));
+      }
+      return real(g);
+    }
+    case 'profile': {
+      const pts = p.points ?? [];
+      const shape = new THREE.Shape();
+      for (let i = 0; i + 2 < pts.length; i += 3) {
+        if (i === 0) shape.moveTo(pts[i + 2], pts[i + 1]);
+        else shape.lineTo(pts[i + 2], pts[i + 1]);
+      }
+      const t = Number(p.props.thickness ?? 0.02);
+      const g = new THREE.Group();
+      if (pts.length >= 9) {
+        for (const side of [1, -1]) {
+          const geo = new THREE.ExtrudeGeometry(shape, { depth: t, bevelEnabled: false });
+          geo.rotateY(-Math.PI / 2);
+          geo.translate(side > 0 ? W / 2 + t : -W / 2, 0, 0);
+          g.add(mesh(geo, M.main));
+        }
+      }
+      M.main.userData.skin = true;
+      return real(g);
+    }
     case 'boatHull': {
       M.main.side = THREE.DoubleSide;
       const hull = mesh(boatHullGeometry(), M.main);

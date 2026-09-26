@@ -12,6 +12,7 @@ const DEG = 180 / Math.PI;
 export interface InspectorActions {
   wrapHull: (ids: string[]) => void;
   focus: (id: string) => void;
+  makeLayer: (id: string) => void;
 }
 
 export class InspectorPanel {
@@ -89,7 +90,24 @@ export class InspectorPanel {
       rows.push(h('label', { class: 'field' }, h('span', {}, 'Label'), h('input', { type: 'text', value: String(p.props.label ?? ''), onchange: (e) => setProp('label', (e.target as HTMLInputElement).value) })));
       rows.push(h('label', { class: 'field check' }, h('input', { type: 'checkbox', checked: p.props.sealed === true, onchange: (e) => setProp('sealed', (e.target as HTMLInputElement).checked) }), h('span', {}, 'Sealed / pressurised')));
     }
-    if (p.type === 'hullShell') {
+    if (p.type === 'frame') {
+      const skinOpts = (cur: string) => [h('option', { value: 'none', selected: cur === 'none' }, 'None (open frame)'),
+        ...MATERIALS.map((m) => h('option', { value: m.id, selected: m.id === cur }, `${m.name}${m.fantasy ? ' ✦' : ''}`))];
+      rows.push(h('div', { class: 'section-title' }, 'Plating & armor'));
+      rows.push(h('label', { class: 'field' }, h('span', {}, 'Outside face'),
+        h('select', { onchange: (e) => setProp('skinOuter', (e.target as HTMLSelectElement).value) }, skinOpts(String(p.props.skinOuter ?? 'none')))));
+      rows.push(h('label', { class: 'field' }, h('span', {}, 'Inside face'),
+        h('select', { onchange: (e) => setProp('skinInner', (e.target as HTMLSelectElement).value) }, skinOpts(String(p.props.skinInner ?? 'none')))));
+      rows.push(num('Plating', Number(p.props.skinThickness ?? 0.03) * 1000, (v) => setProp('skinThickness', Math.max(0.5, v) / 1000), { step: 1, min: 0.5, unit: 'mm' }));
+      rows.push(h('button', { class: 'wide', onclick: () => setProp('outSign', Number(p.props.outSign ?? 1) >= 0 ? -1 : 1) }, '⇅ Swap outside and inside'));
+    }
+    if (p.type === 'deck') {
+      const isLayer = (this.store.design.layers ?? []).some((l) => l.floorId === p.id);
+      rows.push(isLayer
+        ? h('p', { class: 'hint' }, '▤ This floor is a layer.')
+        : h('button', { class: 'wide', onclick: () => this.actions.makeLayer(p.id) }, '▤ Make this floor a layer'));
+    }
+    if (p.type === 'hullShell' || p.type === 'hullSides') {
       rows.push(h('label', { class: 'field check' }, h('input', { type: 'checkbox', checked: p.props.sealed !== false, onchange: (e) => setProp('sealed', (e.target as HTMLInputElement).checked) }), h('span', {}, 'Watertight (displaces water)')));
     }
     if (p.type === 'valve') {

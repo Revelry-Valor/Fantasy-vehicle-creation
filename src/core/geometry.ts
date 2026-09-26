@@ -161,12 +161,14 @@ export function shapeArea(shape: Shape, [a, b, c]: Vec3): number {
 }
 
 export function partVolume(p: PartInstance): number {
-  if (p.type === 'hullShell' && typeof p.props.volume === 'number') return p.props.volume;
+  if ((p.type === 'hullShell' || p.type === 'hullSides') && typeof p.props.volume === 'number') return p.props.volume;
   return shapeVolume(getDef(p.type).shape, p.size);
 }
 
 export function partArea(p: PartInstance): number {
   if (p.type === 'hullShell' && typeof p.props.area === 'number') return p.props.area;
+  // Both side walls of a drawn hull.
+  if (p.type === 'hullSides' && typeof p.props.area === 'number') return p.props.area * 2;
   return shapeArea(getDef(p.type).shape, p.size);
 }
 

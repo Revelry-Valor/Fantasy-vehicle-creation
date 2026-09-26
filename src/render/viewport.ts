@@ -99,9 +99,22 @@ export class Viewport {
     this.camera = new THREE.PerspectiveCamera(50, 1, 0.05, 5000);
     this.camera.position.set(18, 12, 22);
 
+    // Camera: left-drag orbits, right- or middle-drag pans, the wheel zooms
+    // toward whatever is under the cursor, double-click re-centres the orbit.
     this.controls = new OrbitControls(this.camera, this.renderer.domElement);
     this.controls.enableDamping = true;
+    this.controls.dampingFactor = 0.2;
+    this.controls.zoomToCursor = true;
+    this.controls.screenSpacePanning = true;
+    this.controls.rotateSpeed = 0.9;
+    this.controls.panSpeed = 1.2;
+    this.controls.zoomSpeed = 1.4;
+    this.controls.minDistance = 0.5;
+    this.controls.maxDistance = 3000;
+    this.controls.mouseButtons = { LEFT: THREE.MOUSE.ROTATE, MIDDLE: THREE.MOUSE.PAN, RIGHT: THREE.MOUSE.PAN };
     this.controls.target.set(0, 2, 0);
+    this.renderer.domElement.addEventListener('contextmenu', (e) => e.preventDefault());
+    this.renderer.domElement.addEventListener('dblclick', (e) => this.focusAt(e));
 
     this.gizmo = new TransformControls(this.camera, this.renderer.domElement);
     this.gizmo.addEventListener('dragging-changed', (e) => {
@@ -319,7 +332,9 @@ export class Viewport {
         m.color.setHex(m.userData.baseColor);
         m.emissive.setHex(m.userData.baseEmissive);
         m.emissiveIntensity = 1;
-        const op = Math.min(baseOpacity, opacity);
+        let op = Math.min(baseOpacity, opacity);
+        // Plating on framing ghosts out so the structure and interior show through.
+        if (m.userData.skin && this.view !== 'exterior') op = Math.min(op, this.view === 'structure' ? 0.07 : 0.12);
         const transparent = baseTransparent || op < 1;
         if (m.transparent !== transparent) { m.transparent = transparent; m.needsUpdate = true; }
         m.opacity = op;
@@ -476,14 +491,14 @@ export class Viewport {
     dom.addEventListener('pointerleave', () => { if (this.ghost) this.ghost.visible = false; });
   }
 
-  private setPointer(e: PointerEvent) {
+  private setPointer(e: MouseEvent) {
     const r = this.renderer.domElement.getBoundingClientRect();
     this.pointer.set(((e.clientX - r.left) / r.width) * 2 - 1, -((e.clientY - r.top) / r.height) * 2 + 1);
     this.raycaster.setFromCamera(this.pointer, this.camera);
   }
 
   /** First visible part under the pointer. */
-  pick(e: PointerEvent): { id: string; point: THREE.Vector3; normal: THREE.Vector3 } | null {
+  pick(e: MouseEvent): { id: string; point: THREE.Vector3; normal: THREE.Vector3 } | null {
     this.setPointer(e);
     const roots = [...this.entries.values()].map((x) => x.obj.root).filter((r) => r.visible);
     const hits = this.raycaster.intersectObjects(roots, true);
@@ -634,6 +649,33 @@ export class Viewport {
     this.camera.position.copy(this.controls.target).addScaledVector(dir, radius * 2.4);
   }
 
+  /** Double-click: orbit around the point under the cursor (a part or the ground). */
+  private focusAt(e: MouseEvent) {
+    const hit = this.pick(e);
+    let point: THREE.Vector3 | null = hit ? hit.point.clone().add(this.vehicle.position) : null;
+    if (!point) {
+      this.setPointer(e);
+      const p = new THREE.Vector3();
+      if (this.raycaster.ray.intersectPlane(new THREE.Plane(new THREE.Vector3(0, 1, 0), 0), p)) point = p;
+    }
+    if (!point) return;
+    const offset = this.camera.position.clone().sub(this.controls.target);
+    const dist = Math.min(offset.length(), Math.max(4, this.camera.position.distanceTo(point) * 0.7));
+    this.controls.target.copy(point);
+    this.camera.position.copy(point).add(offset.setLength(dist));
+  }
+
+  /** Slide the camera and its pivot across the screen (arrow keys). */
+  panBy(dx: number, dy: number) {
+    const dist = this.camera.position.distanceTo(this.controls.target);
+    const step = dist * 0.08;
+    const right = new THREE.Vector3().setFromMatrixColumn(this.camera.matrix, 0).multiplyScalar(dx * step);
+    const up = new THREE.Vector3().setFromMatrixColumn(this.camera.matrix, 1).multiplyScalar(dy * step);
+    const d = right.add(up);
+    this.camera.position.add(d);
+    this.controls.target.add(d);
+  }
+
   viewFrom(which: 'front' | 'side' | 'top' | 'iso') {
     const t = this.controls.target;
     const d = this.camera.position.distanceTo(t);
@@ -665,8 +707,12 @@ export class Viewport {
     this.camera.updateProjectionMatrix();
   }
 
+  /** Paused while the 2D blueprint is showing. */
+  active = true;
+
   private frame() {
     this.timer.update();
+    if (!this.active) return;
     const dt = Math.min(0.05, this.timer.getDelta());
     const sim = this.styleOpts.sim;
     if (sim) {

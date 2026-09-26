@@ -6,20 +6,25 @@ import { wrapHull } from './core/hullwrap';
 import { Store } from './core/store';
 import { TEMPLATES } from './core/templates';
 import { newDesign, type Design, type Vec3 } from './core/types';
+import { Blueprint } from './render/blueprint';
 import { Viewport, type GizmoMode, type ViewMode } from './render/viewport';
 import { Simulation } from './sim/simulation';
 import { AnalysisPanel } from './ui/analysisPanel';
 import { CatalogPanel } from './ui/catalog';
 import { clear, download, h } from './ui/dom';
 import { InspectorPanel } from './ui/inspector';
+import { PenPanel } from './ui/penPanel';
 import { SettingsPanel } from './ui/settingsPanel';
 import { SimPanel } from './ui/simPanel';
 
-const AUTOSAVE_KEY = 'vessel-forge:autosave';
+const AUTOSAVE_KEY = 'vessel-forge:autosave:v2';
 type Tab = 'inspect' | 'analysis' | 'simulate' | 'settings';
+type Mode = '2d' | '3d';
 
 // ── State ────────────────────────────────────────────────────────────────────
-const store = new Store(loadAutosave() ?? TEMPLATES[0].make());
+// A fresh start is an empty sheet: build whatever you like. Samples live in File.
+const store = new Store(loadAutosave() ?? newDesign());
+let mode: Mode = '2d';
 let analysis: Analysis | null = null;
 let sim: Simulation | null = null;
 let simSnapshot: string | null = null;
@@ -29,12 +34,24 @@ let tab: Tab = 'analysis';
 
 const $ = (id: string) => document.getElementById(id)!;
 const viewport = new Viewport($('viewport'), store);
-const catalog = new CatalogPanel($('left'), (def) => {
+const blueprint = new Blueprint($('viewport'), store);
+const pensEl = h('div', { class: 'pens' });
+const catalogEl = h('div', { class: 'catalog' });
+$('left').append(pensEl, catalogEl);
+const penPanel = new PenPanel(pensEl, store, blueprint, () => { renderToolbar(); penPanel.render(); });
+const catalog = new CatalogPanel(catalogEl, (def) => {
   if (sim) return status('Stop the simulation to edit.');
-  viewport.setTool('place', def.type);
+  if (mode === '2d') blueprint.setTool('place', { placeType: def.type });
+  else viewport.setTool('place', def.type);
   catalog.setActive(def.type);
   renderToolbar();
 });
+blueprint.onStatus = (m) => status(m);
+blueprint.onToolChange = () => {
+  if (blueprint.tool !== 'place') catalog.setActive(null);
+  penPanel.render();
+  renderToolbar();
+};
 const tabBody = $('tab-body');
 const panes: Record<Tab, HTMLElement> = {
   inspect: h('div', { class: 'pane' }),
@@ -47,6 +64,10 @@ tabBody.append(...Object.values(panes));
 const inspector = new InspectorPanel(panes.inspect, store, {
   wrapHull: (ids) => doWrapHull(ids),
   focus: (id) => focusPart(id),
+  makeLayer: (id) => {
+    const l = store.makeLayer(id);
+    if (l) { blueprint.activeLayerId = l.id; penPanel.render(); status(`"${l.name}" is now a layer. Switch to the top plan to draw on it.`); }
+  },
 });
 const analysisPanel = new AnalysisPanel(panes.analysis, (ids) => {
   store.select(ids);
@@ -86,6 +107,8 @@ let analysisTimer = 0;
 let saveTimer = 0;
 store.on('change', () => {
   viewport.sync();
+  blueprint.invalidate();
+  penPanel.render();
   clearTimeout(analysisTimer);
   analysisTimer = window.setTimeout(runAnalysis, 120);
   clearTimeout(saveTimer);
@@ -95,6 +118,7 @@ store.on('change', () => {
 });
 store.on('selection', () => {
   viewport.sync();
+  blueprint.invalidate();
   inspector.render();
   if (store.selection.length && tab !== 'simulate') setTab('inspect');
 });
@@ -111,7 +135,7 @@ function runAnalysis() {
   inspector.render();
   const v = analysis.verdict;
   $('view-overlay').className = `verdict-chip ${v.level}`;
-  $('view-overlay').textContent = analysis.partCount ? v.message : 'Empty design — pick a part on the left, or load a template from the menu.';
+  $('view-overlay').textContent = analysis.partCount ? v.message : 'Empty sheet. Pick a pen on the left and start drawing, or open a sample from ☰ File.';
   $('view-overlay').hidden = !!sim;
   if (performance.now() - lastStatusAt > 4000) status('');
 }
@@ -140,20 +164,47 @@ function renderToolbar() {
     h('div', { class: 'menu-body' },
       h('button', { onclick: () => { closeMenus(); stopSim(); store.load(newDesign()); status('Started a new design. Undo (Ctrl+Z) brings the previous one back.'); } }, 'New empty design'),
       h('div', { class: 'menu-sep' }, 'Templates'),
-      TEMPLATES.map((t) => h('button', { title: t.description, onclick: () => { closeMenus(); stopSim(); store.load(t.make()); setTimeout(() => viewport.frameAll(), 200); } }, t.name)),
+      TEMPLATES.map((t) => h('button', { title: t.description, onclick: () => { closeMenus(); stopSim(); store.load(t.make()); setTimeout(fitAll, 200); } }, t.name)),
       h('div', { class: 'menu-sep' }),
       h('button', { onclick: () => { closeMenus(); ($('file-input') as HTMLInputElement).click(); } }, 'Open .json…'),
       h('button', { onclick: () => { closeMenus(); download(`${slug(store.design.name)}.vessel.json`, JSON.stringify(store.design, null, 1), 'application/json'); } }, 'Save .json'),
       h('button', { onclick: () => { closeMenus(); exportGLB(); } }, 'Export 3D model (.glb)'),
       h('button', { onclick: () => { closeMenus(); download(`${slug(store.design.name)}.png`, dataUrlToBlob(viewport.screenshot()), 'image/png'); } }, 'Screenshot (.png)'),
     ));
+  const modeSwitch = h('div', { class: 'group mode-switch' },
+    btn('✎ 2D Blueprint', () => setMode('2d'), { active: mode === '2d', title: 'Draw the craft in side and top views (Tab switches view)' }),
+    btn('⬢ 3D', () => setMode('3d'), { active: mode === '3d', title: 'Orbit around the craft in 3D' }),
+  );
+  const history = h('div', { class: 'group' },
+    btn('↶', () => store.undo(), { title: 'Undo (Ctrl+Z)', disabled: !store.canUndo() || !editing }),
+    btn('↷', () => store.redo(), { title: 'Redo (Ctrl+Y)', disabled: !store.canRedo() || !editing }),
+  );
+  const snapSelect = h('label', { class: 'inline', title: 'Grid snap' }, 'Snap',
+    h('select', { onchange: (e) => { const s = parseFloat((e.target as HTMLSelectElement).value); viewport.setSnap(s); blueprint.snapStep = s; blueprint.invalidate(); } },
+      [0, 0.05, 0.1, 0.25, 0.5, 1].map((s) => h('option', { value: s, selected: viewport.snap === s }, s ? `${s} m` : 'off'))));
+  const simBtn = h('div', { class: 'group right' },
+    sim ? btn('■ Stop sim', stopSim, { cls: 'danger' }) : btn('▶ Simulate', () => { startSim(); setTab('simulate'); }, { cls: 'primary' }),
+  );
+  if (mode === '2d') {
+    clear(tb,
+      h('div', { class: 'brand' }, '⚓ Vessel Forge', h('span', { class: 'design-name' }, store.design.name)),
+      menu, modeSwitch, history,
+      h('div', { class: 'group' },
+        btn('Side', () => { blueprint.setView('side'); penPanel.render(); renderToolbar(); }, { active: blueprint.view === 'side', title: 'Side profile (Tab)' }),
+        btn('Top', () => { blueprint.setView('top'); penPanel.render(); renderToolbar(); }, { active: blueprint.view === 'top', title: 'Top plan (Tab)' }),
+      ),
+      h('div', { class: 'group' },
+        btn(`⇋ Mirror ${store.mirror ? 'on' : 'off'}`, () => { store.mirror = !store.mirror; renderToolbar(); }, { active: store.mirror, title: 'Top plan: things drawn off the centre line get a twin on the other side (M)' }),
+        snapSelect,
+      ),
+      h('div', { class: 'group' }, btn('⌖ Fit', () => blueprint.fit(), { title: 'Fit the drawing to the screen (F)' })),
+      simBtn,
+    );
+    return;
+  }
   clear(tb,
     h('div', { class: 'brand' }, '⚓ Vessel Forge', h('span', { class: 'design-name' }, store.design.name)),
-    menu,
-    h('div', { class: 'group' },
-      btn('↶', () => store.undo(), { title: 'Undo (Ctrl+Z)', disabled: !store.canUndo() || !editing }),
-      btn('↷', () => store.redo(), { title: 'Redo (Ctrl+Y)', disabled: !store.canRedo() || !editing }),
-    ),
+    menu, modeSwitch, history,
     h('div', { class: 'group' },
       btn('➚ Select', () => { viewport.setTool('select'); catalog.setActive(null); renderToolbar(); }, { active: viewport.tool === 'select', title: 'Select tool (Esc)' }),
       (['translate', 'rotate', 'scale'] as GizmoMode[]).map((m, i) =>
@@ -162,9 +213,7 @@ function renderToolbar() {
     ),
     h('div', { class: 'group' },
       btn(`⇋ Mirror ${store.mirror ? 'on' : 'off'}`, () => { store.mirror = !store.mirror; renderToolbar(); }, { active: store.mirror, title: 'Mirror new parts across the centre line (M)' }),
-      h('label', { class: 'inline', title: 'Grid snap' }, 'Snap',
-        h('select', { onchange: (e) => { viewport.setSnap(parseFloat((e.target as HTMLSelectElement).value)); } },
-          [0, 0.05, 0.1, 0.25, 0.5, 1].map((s) => h('option', { value: s, selected: viewport.snap === s }, s ? `${s} m` : 'off')))),
+      snapSelect,
     ),
     h('div', { class: 'group views' },
       ([['structure', '▦ Structural'], ['interior', '≋ Interior & Systems'], ['exterior', '⬢ Exterior']] as [ViewMode, string][]).map(([v, l], i) =>
@@ -185,10 +234,36 @@ function renderToolbar() {
       (['front', 'side', 'top', 'iso'] as const).map((v) => btn(v[0].toUpperCase(), () => viewport.viewFrom(v), { title: `${v} view` })),
       btn(viewport.showMarkers ? '◉ Markers' : '○ Markers', () => { viewport.showMarkers = !viewport.showMarkers; viewport.setAnalysis(analysis); renderToolbar(); }, { active: viewport.showMarkers, title: 'Show CoG / lift markers and dimensions' }),
     ),
-    h('div', { class: 'group right' },
-      sim ? btn('■ Stop sim', stopSim, { cls: 'danger' }) : btn('▶ Simulate', () => { startSim(); setTab('simulate'); }, { cls: 'primary' }),
-    ),
+    simBtn,
   );
+}
+
+function setMode(m: Mode) {
+  if (sim && m === '2d') stopSim();
+  mode = m;
+  const is2d = m === '2d';
+  blueprint.setVisible(is2d);
+  viewport.active = !is2d;
+  viewport.renderer.domElement.hidden = is2d;
+  viewport.labelRenderer.domElement.hidden = is2d;
+  if (is2d) {
+    viewport.setTool('select');
+    pensEl.hidden = false;
+    penPanel.render();
+  } else {
+    blueprint.setTool('select');
+    pensEl.hidden = true;
+    viewport.sync();
+    setTimeout(() => viewport.frameAll(), 30);
+  }
+  catalog.setActive(null);
+  renderToolbar();
+  status('');
+}
+
+function fitAll() {
+  blueprint.fit();
+  viewport.frameAll();
 }
 
 function closeMenus() {
@@ -223,6 +298,7 @@ function focusPart(id: string) {
 
 function startSim() {
   if (sim) return;
+  if (mode === '2d') setMode('3d');
   simSnapshot = JSON.stringify(store.design);
   store.select([]);
   sim = new Simulation(store.design);
@@ -294,6 +370,7 @@ function validate(d: unknown): Design | null {
   if (!x || !Array.isArray(x.parts) || !x.settings) return null;
   x.parts = x.parts.filter((p) => p && hasDef(p.type) && Array.isArray(p.position) && Array.isArray(p.size));
   x.settings = { ...newDesign().settings, ...x.settings };
+  if (!Array.isArray(x.layers)) x.layers = [];
   return x;
 }
 
@@ -301,7 +378,7 @@ function validate(d: unknown): Design | null {
   const f = (e.target as HTMLInputElement).files?.[0];
   if (!f) return;
   const d = validate(JSON.parse(await f.text()));
-  if (d) { stopSim(); store.load(d); setTimeout(() => viewport.frameAll(), 200); }
+  if (d) { stopSim(); store.load(d); setTimeout(fitAll, 200); }
   else status('That file is not a vessel design.');
   (e.target as HTMLInputElement).value = '';
 });
@@ -329,6 +406,30 @@ window.addEventListener('keydown', (e) => {
   if (ctrl && k === 'd' && !sim) { e.preventDefault(); store.duplicate(store.selection); return; }
   if (ctrl) return;
   if ((k === 'delete' || k === 'backspace') && store.selection.length && !sim) { store.removeParts(store.selection); return; }
+  if (k === 'm') { store.mirror = !store.mirror; renderToolbar(); return; }
+  if (mode === '2d') {
+    if (blueprint.handleKey(e)) { renderToolbar(); penPanel.render(); return; }
+    if (k === 'escape') { store.select([]); return; }
+    // Arrow keys nudge in the drawing plane; PgUp/PgDn move across it.
+    const step = blueprint.snapStep || 0.05;
+    const plane: Record<string, [number, number, number]> = { arrowleft: [-step, 0, 0], arrowright: [step, 0, 0], arrowup: [0, step, 0], arrowdown: [0, -step, 0], pageup: [0, 0, step], pagedown: [0, 0, -step] };
+    const d = plane[k];
+    if (d && store.selection.length) {
+      e.preventDefault();
+      const side = blueprint.view === 'side';
+      // (u, v, out) → world: side (z, y, x), top (z, x, y)
+      const w: Vec3 = side ? [d[2], d[1], d[0]] : [d[1], d[2], d[0]];
+      store.commit(() => {
+        const done = new Set<string>();
+        for (const p of store.selectedParts()) {
+          if (done.has(p.id)) continue;
+          if (p.mirrorOf) done.add(p.mirrorOf);
+          store.updatePart(p.id, { position: [p.position[0] + w[0], p.position[1] + w[1], p.position[2] + w[2]] }, false);
+        }
+      });
+    }
+    return;
+  }
   if (k === 'escape') { viewport.setTool('select'); catalog.setActive(null); store.select([]); renderToolbar(); return; }
   if (k === 'w') { viewport.setGizmoMode('translate'); renderToolbar(); }
   if (k === 'e') { viewport.setGizmoMode('rotate'); renderToolbar(); }
@@ -336,7 +437,6 @@ window.addEventListener('keydown', (e) => {
     if (viewport.tool === 'place') viewport.rotateGhost();
     else { viewport.setGizmoMode('scale'); renderToolbar(); }
   }
-  if (k === 'm') { store.mirror = !store.mirror; renderToolbar(); }
   if (k === 'f') viewport.frameAll();
   if (k === '1') { viewport.setView('structure'); renderToolbar(); }
   if (k === '2') { viewport.setView('interior'); renderToolbar(); }
@@ -344,6 +444,13 @@ window.addEventListener('keydown', (e) => {
   // Arrow-key nudging by the snap step (PageUp/PageDown for vertical).
   const step = viewport.snap || 0.05;
   const nudge: Record<string, Vec3> = { arrowleft: [-step, 0, 0], arrowright: [step, 0, 0], arrowup: [0, 0, step], arrowdown: [0, 0, -step], pageup: [0, step, 0], pagedown: [0, -step, 0] };
+  if (nudge[k] && !store.selection.length) {
+    // Nothing selected: arrow keys slide the camera instead.
+    e.preventDefault();
+    const pan: Record<string, [number, number]> = { arrowleft: [-1, 0], arrowright: [1, 0], arrowup: [0, 1], arrowdown: [0, -1], pageup: [0, 1], pagedown: [0, -1] };
+    viewport.panBy(...pan[k]);
+    return;
+  }
   if (nudge[k] && store.selection.length && !sim) {
     e.preventDefault();
     const d = nudge[k];
@@ -384,11 +491,11 @@ requestAnimationFrame(loop);
 viewport.setSnap(0.25);
 viewport.sync();
 runAnalysis();
-renderToolbar();
 setTab('analysis');
 settingsPanel.render();
-status('');
-setTimeout(() => viewport.frameAll(), 50);
+setMode('2d');
+if (!store.design.parts.length) blueprint.setTool('pen', { pen: 'floor' });
+setTimeout(fitAll, 50);
 
 // Handy for scripting and debugging from the browser console.
-(window as unknown as Record<string, unknown>).vesselForge = { store, viewport, getSim: () => sim, startSim, stopSim };
+(window as unknown as Record<string, unknown>).vesselForge = { store, viewport, blueprint, getSim: () => sim, startSim, stopSim, setMode };

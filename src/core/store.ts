@@ -1,6 +1,6 @@
 import { getDef } from './catalog';
 import { mirrorTransform } from './geometry';
-import { clonePart, newDesign, newId, type Design, type DesignSettings, type PartInstance, type PropValue, type Vec3 } from './types';
+import { clonePart, newDesign, newId, type Design, type DesignLayer, type DesignSettings, type PartInstance, type PropValue, type Vec3 } from './types';
 
 type Listener = () => void;
 type EventName = 'change' | 'selection' | 'settings';
@@ -194,6 +194,7 @@ export class Store {
     }
     this.commit(() => {
       this.design.parts = this.design.parts.filter((p) => !kill.has(p.id));
+      if (this.design.layers) this.design.layers = this.design.layers.filter((l) => !kill.has(l.floorId));
     });
     this.select(this.selection.filter((id) => !kill.has(id)));
   }
@@ -208,6 +209,27 @@ export class Store {
         if (t) delete t.mirrorOf;
       }
     });
+  }
+
+  // ── Layers ───────────────────────────────────────────────────────────────
+  makeLayer(floorId: string): DesignLayer | null {
+    const floor = this.get(floorId);
+    if (!floor) return null;
+    const layers = (this.design.layers ??= []);
+    const existing = layers.find((l) => l.floorId === floorId);
+    if (existing) return existing;
+    const layer: DesignLayer = { id: newId(), name: `Deck ${layers.length + 1}`, floorId, visible: true };
+    this.commit(() => layers.push(layer));
+    return layer;
+  }
+
+  updateLayer(id: string, patch: Partial<Omit<DesignLayer, 'id'>>) {
+    const l = this.design.layers?.find((x) => x.id === id);
+    if (l) this.commit(() => Object.assign(l, patch));
+  }
+
+  removeLayer(id: string) {
+    this.commit(() => { this.design.layers = (this.design.layers ?? []).filter((l) => l.id !== id); });
   }
 
   duplicate(ids: string[], offset: Vec3 = [0, 0, 1]) {

@@ -86,11 +86,36 @@ export function contentsMass(p: PartInstance, fill: number): number {
 }
 
 /** Dry (structural) mass of a part, kg. */
+/** Width of each rail in a framing section, m. */
+export function frameRailWidth(p: PartInstance): number {
+  return Math.min(0.15, Math.max(0.05, p.size[0] * 0.04));
+}
+
+function frameMass(p: PartInstance): number {
+  const [span, depth, len] = p.size;
+  const rail = frameRailWidth(p);
+  const rho = getMaterial(p.material).density;
+  const ties = Math.floor(len) + 1;
+  let m = (2 * rail * depth * len + ties * span * depth * 0.6 * 0.08) * rho;
+  const t = Number(p.props.skinThickness ?? 0.03);
+  for (const k of ['skinOuter', 'skinInner']) {
+    const skin = String(p.props[k] ?? 'none');
+    if (skin !== 'none') m += span * len * t * getMaterial(skin).density;
+  }
+  return m;
+}
+
+export function isSealedShell(p: PartInstance): boolean {
+  return (p.type === 'hullShell' || p.type === 'hullSides') && p.props.sealed !== false;
+}
+
 export function dryMass(p: PartInstance): number {
   const def = getDef(p.type);
   const mat = getMaterial(p.material);
   let m: number;
-  if (def.massMode === 'solid') {
+  if (p.type === 'frame') {
+    m = frameMass(p);
+  } else if (def.massMode === 'solid') {
     m = partVolume(p) * (def.fill ?? 1) * mat.density;
   } else if (def.massMode === 'shell') {
     const t = typeof p.props.thickness === 'number' ? p.props.thickness : 0.01;
@@ -115,6 +140,11 @@ export function memberCapacity(p: PartInstance): number {
   const def = getDef(p.type);
   const sigma = getMaterial(p.material).strength * 1e6;
   const d = [...p.size].sort((a, b) => a - b);
+  if (p.type === 'frame') {
+    const rail = frameRailWidth(p);
+    const depth = p.size[1];
+    return 2 * (4 * sigma * ((rail * depth * depth) / 6)) / Math.max(p.size[2], 0.1);
+  }
   if (def.massMode === 'shell') {
     const t = typeof p.props.thickness === 'number' ? p.props.thickness : 0.02;
     return sigma * t * d[1] * 0.2;
@@ -204,7 +234,7 @@ export function analyze(design: Design, o: RuntimeOverrides = {}): Analysis {
       addLift(p, n);
     }
     if (d.displacement) displacementVol += partVolume(p) * d.displacement * (h > 0.2 ? 1 : 0);
-    if (p.type === 'hullShell' && p.props.sealed !== false) displacementVol += partVolume(p) * 0.9 * (h > 0.2 ? 1 : 0);
+    if (isSealedShell(p)) displacementVol += partVolume(p) * 0.9 * (h > 0.2 ? 1 : 0);
     if (d.thrust && d.thrustEnv?.includes(env)) {
       let scale: number;
       if (d.shape === 'nozzle') scale = (p.size[0] * p.size[1]) / (d.defaultSize[0] * d.defaultSize[1]);
@@ -225,7 +255,7 @@ export function analyze(design: Design, o: RuntimeOverrides = {}): Analysis {
   const displacementCapacityN = displacementVol * WATER_DENSITY * G;
   let draft: number | null = null;
   let metacentricHeight: number | null = null;
-  const hulls = parts.filter((p) => getDef(p.type).displacement || p.type === 'hullShell');
+  const hulls = parts.filter((p) => getDef(p.type).displacement || isSealedShell(p));
   const mainHull = hulls.sort((a, b) => partVolume(b) - partVolume(a))[0];
   if (env === 'water') {
     waterBuoyancyN = Math.min(weightN, displacementCapacityN);
@@ -375,7 +405,7 @@ export function analyze(design: Design, o: RuntimeOverrides = {}): Analysis {
       case 'space': {
         if (thrustN === 0) verdict = { level: 'error', message: 'No reaction thrusters — propellers and sails do nothing in vacuum.' };
         else verdict = { level: 'ok', message: `Acceleration ${(accel / G).toFixed(2)} g${deltaV ? `, Δv ${Math.round(deltaV)} m/s` : ''}.` };
-        if (crew > 0 && !parts.some((p) => p.type === 'pressureHull' || (p.type === 'hullShell' && p.props.sealed !== false))) {
+        if (crew > 0 && !parts.some((p) => p.type === 'pressureHull' || isSealedShell(p))) {
           issues.push({ level: 'error', message: 'Crew aboard but no pressurised hull — they will not survive vacuum.' });
         }
         if (!propellantMass && thrustN > 0) issues.push({ level: 'warn', message: 'Thrusters but no propellant tank.' });

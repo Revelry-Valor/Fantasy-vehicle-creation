@@ -44,11 +44,21 @@ export interface DesignSettings {
   altitude: number;
 }
 
+/** A deck promoted to a layer: the top-down view can show layers one at a time. */
+export interface DesignLayer {
+  id: string;
+  name: string;
+  /** The floor part whose top surface sets this layer's elevation. */
+  floorId: string;
+  visible: boolean;
+}
+
 export interface Design {
   name: string;
   version: 1;
   settings: DesignSettings;
   parts: PartInstance[];
+  layers?: DesignLayer[];
 }
 
 export const DEFAULT_SETTINGS: DesignSettings = {
@@ -61,7 +71,7 @@ export const DEFAULT_SETTINGS: DesignSettings = {
 };
 
 export function newDesign(name = 'Untitled Vessel'): Design {
-  return { name, version: 1, settings: { ...DEFAULT_SETTINGS }, parts: [] };
+  return { name, version: 1, settings: { ...DEFAULT_SETTINGS }, parts: [], layers: [] };
 }
 
 let idCounter = 0;
