@@ -1,6 +1,6 @@
 import { Euler, Matrix4, Quaternion, Vector3 } from 'three';
 import { getDef } from './catalog';
-import { localToWorld, mirrorTransform, rotationMatrix } from './geometry';
+import { localToWorld, mirrorShapeData, mirrorTransform, outlineAreaXZ, rotationMatrix } from './geometry';
 import { newId, type Design, type PartInstance, type Vec3 } from './types';
 
 /**
@@ -99,6 +99,12 @@ export interface PenOptions {
   armorMaterial: string;
   armorSide: ArmorSide;
   skinThickness: number;
+  /** Top plan floors: drag a rectangle, or click out any shape corner by corner. */
+  floorShape: 'rect' | 'free';
+  /** Framing: outline sections that span the width, or flat panels drawn in the view's own plane. */
+  frameMode: 'profile' | 'panel';
+  /** Side-profile panels: against both side walls (mirrored) or on the centre line. */
+  panelPlacement: 'sides' | 'centre';
   /** Ramp pen: a smooth sloped floor or a flight of stairs. */
   rampStyle: 'ramp' | 'stairs';
   /** Top plan: how far a ramp or ladder climbs, m. */
@@ -112,6 +118,9 @@ export const DEFAULT_PEN_OPTIONS: PenOptions = {
   floorType: 'pine',
   width: 4,
   ceilingHeight: 2.4,
+  floorShape: 'rect',
+  frameMode: 'profile',
+  panelPlacement: 'sides',
   rampStyle: 'ramp',
   rampRise: 2.4,
   cutoutStyle: 'window',
@@ -172,6 +181,7 @@ export function mirrorPair(p: PartInstance): [PartInstance, PartInstance] {
   const m = mirrorTransform(p.position, p.rotation);
   t.position = m.position;
   t.rotation = m.rotation;
+  Object.assign(t, mirrorShapeData(p));
   p.mirrorOf = t.id;
   t.mirrorOf = p.id;
   return [p, t];
@@ -198,6 +208,37 @@ export function drawFloor(view: PlaneView, a: P2, b: P2, opts: PenOptions, layer
   const len = Math.abs(b.u - a.u), wid = Math.abs(b.v - a.v);
   if (len < 0.05 || wid < 0.05) return [];
   return [named(part('deck', [(a.v + b.v) / 2, layerY - t / 2, (a.u + b.u) / 2], [wid, t, len], [0, 0, 0], ft.material), 'Floor')];
+}
+
+/** A floor of any shape, clicked out corner by corner in the top plan; its top sits at `layerY`. */
+export function drawFloorPolygon(points: P2[], opts: PenOptions, layerY = 0): PartInstance | null {
+  if (points.length < 3) return null;
+  const ft = floorTypeOf(opts);
+  const temp = part('deck', [0, layerY - ft.thickness / 2, 0], [1, ft.thickness, 1], [0, 0, 0], ft.material);
+  // Top plan: u = Z, v = X, and a flat floor's local X/Z are the world's.
+  const shaped = withDeckOutline(temp, points.map((q) => [q.v, q.u] as [number, number]));
+  const f: PartInstance = { ...temp, ...shaped };
+  if (outlineAreaXZ(f.points!) < 0.01) return null;
+  f.name = 'Floor';
+  return f;
+}
+
+/**
+ * A flat framing panel drawn in the view's own plane: side panels in the side
+ * profile (against both side walls, or wherever the first point was), or
+ * horizontal sheets in the top plan.
+ */
+export function drawPanel(view: PlaneView, points: P2[], opts: PenOptions, out: number, mirrored: boolean): PartInstance[] {
+  if (points.length < 3) return [];
+  const world = points.map((q) => toWorld(view, q, out));
+  const n = world.length;
+  const avg = world.reduce((acc, w) => [acc[0] + w[0] / n, acc[1] + w[1] / n, acc[2] + w[2] / n], [0, 0, 0]);
+  // Outside faces away from the centre line (side panels) or upward (top-plan sheets).
+  const centre: Vec3 = view === 'side' ? [0, avg[1], avg[2]] : [avg[0], avg[1] - 1, avg[2]];
+  const p = framePolygon3D(world, opts, centre);
+  if (!p) return [];
+  p.name = view === 'side' ? 'Side panel' : 'Panel';
+  return mirrored && Math.abs(out) > 0.02 ? mirrorPair(p) : [p];
 }
 
 /** Floor + ceiling + the air volume between them. */

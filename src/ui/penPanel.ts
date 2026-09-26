@@ -55,6 +55,10 @@ export class PenPanel {
         case 'room':
           options = [
             select('Flooring', 'floorType', FLOOR_TYPES.map((f) => ({ value: f.id, label: `${f.name} (${Math.round(f.thickness * 1000)} mm)` }))),
+            !side && pen === 'floor' ? h('div', { class: 'seg' }, h('span', {}, 'Shape'),
+              segBtn('Rectangle', o.floorShape === 'rect', () => set('floorShape', 'rect')),
+              segBtn('Freeform', o.floorShape === 'free', () => set('floorShape', 'free'))) : null,
+            !side && pen === 'floor' && o.floorShape === 'free' ? h('p', { class: 'hint' }, 'Click each corner of the floor; click the first corner (or press Enter) to fill it in.') : null,
             side ? num('Width', 'width', 'm', 0.25) : null,
             pen === 'room' ? num('Ceiling height', 'ceilingHeight', 'm', 0.1) : null,
           ];
@@ -94,6 +98,15 @@ export class PenPanel {
           break;
         case 'frame':
           options = [
+            in3d ? null : h('div', { class: 'seg' }, h('span', {}, 'Draw'),
+              segBtn('Outline', o.frameMode === 'profile', () => set('frameMode', 'profile')),
+              segBtn('Panel', o.frameMode === 'panel', () => set('frameMode', 'panel'))),
+            !in3d && o.frameMode === 'panel' ? h('p', { class: 'hint' }, side
+              ? 'Click the corners of a flat panel on the side of the craft; click the first corner or press Enter to finish. Start on a part to put the panel at that part\'s side.'
+              : 'Click the corners of a flat sheet (roof, deck plate, platform) on the active deck; click the first corner or press Enter to finish. Start on a part to use its height.') : null,
+            !in3d && o.frameMode === 'panel' && side ? h('div', { class: 'seg' }, h('span', {}, 'Panel at'),
+              segBtn('Both sides', o.panelPlacement === 'sides', () => set('panelPlacement', 'sides')),
+              segBtn('Centre', o.panelPlacement === 'centre', () => set('panelPlacement', 'centre'))) : null,
             h('label', { class: 'field' }, h('span', {}, 'Sheet'),
               h('select', {
                 onchange: (e) => {

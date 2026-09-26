@@ -10,6 +10,8 @@ export type Pen3D = 'support' | 'frame';
 interface Hover {
   p: THREE.Vector3;
   kind: 'point' | 'surface' | 'plane';
+  /** The part being snapped to, outlined so you can see it. */
+  target?: string;
 }
 
 /** What the 3D drawing tool needs from the viewport. */
@@ -21,6 +23,7 @@ export interface Draw3DHost {
   snap: number;
   rayFrom(e: MouseEvent): THREE.Ray;
   pickPoint(e: MouseEvent): THREE.Vector3 | null;
+  pickId(e: MouseEvent): string | null;
   onStatus(msg: string): void;
 }
 
@@ -40,6 +43,7 @@ export class Draw3D {
   private line: THREE.Line;
   private marker: THREE.Mesh;
   private markerMat: THREE.MeshBasicMaterial;
+  private targetBox: THREE.LineSegments;
 
   constructor(private host: Draw3DHost, private store: Store, private opts: () => PenOptions) {
     this.line = new THREE.Line(new THREE.BufferGeometry(), new THREE.LineBasicMaterial({ color: 0xffd35a, depthTest: false }));
@@ -47,7 +51,15 @@ export class Draw3D {
     this.markerMat = new THREE.MeshBasicMaterial({ color: 0xffd35a, depthTest: false });
     this.marker = new THREE.Mesh(new THREE.SphereGeometry(0.08, 12, 8), this.markerMat);
     this.marker.renderOrder = 21;
-    this.preview.add(this.line, this.marker);
+    // Red centre line: the mirror line down the middle of the craft.
+    const centre = new THREE.Line(
+      new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(0, 0.01, -500), new THREE.Vector3(0, 0.01, 500)]),
+      new THREE.LineBasicMaterial({ color: 0xff4040 }),
+    );
+    this.targetBox = new THREE.LineSegments(new THREE.EdgesGeometry(new THREE.BoxGeometry(1, 1, 1)), new THREE.LineBasicMaterial({ color: 0x7dffb0, depthTest: false }));
+    this.targetBox.renderOrder = 19;
+    this.targetBox.visible = false;
+    this.preview.add(this.line, this.marker, centre, this.targetBox);
     this.preview.visible = false;
     host.vehicle.add(this.preview);
   }
@@ -82,7 +94,14 @@ export class Draw3D {
     if (this.pen === 'support') {
       const last = this.points[this.points.length - 1];
       if (last && last.distanceTo(p) > 0.05) {
-        const part = support3D(last.toArray() as Vec3, p.toArray() as Vec3, this.opts());
+        let a = last.clone(), b = p.clone();
+        // Straight out from the centre line with mirroring on: one beam across both sides.
+        const acrossOnly = Math.abs(a.y - b.y) < 1e-3 && Math.abs(a.z - b.z) < 1e-3;
+        if (this.store.mirror && acrossOnly) {
+          if (Math.abs(a.x) < 1e-3 && Math.abs(b.x) > 0.02) a = new THREE.Vector3(-b.x, b.y, b.z);
+          else if (Math.abs(b.x) < 1e-3 && Math.abs(a.x) > 0.02) b = new THREE.Vector3(-a.x, a.y, a.z);
+        }
+        const part = support3D(a.toArray() as Vec3, b.toArray() as Vec3, this.opts());
         if (part) this.store.addParts([part], false);
       }
       // Keep going from here, so trusses and frames can be chained.
@@ -133,14 +152,17 @@ export class Draw3D {
     };
     // 1. Ends and corners of existing parts.
     let best: THREE.Vector3 | null = null, bestD = SNAP_PX;
+    let owner: string | undefined;
+    let current: string | undefined;
     const consider = (w: THREE.Vector3) => {
       const s = toScreen(w);
       if (!s) return;
       const d = Math.hypot(s.x - mx, s.y - my);
-      if (d < bestD) { bestD = d; best = w; }
+      if (d < bestD) { bestD = d; best = w; owner = current; }
     };
     for (const q of this.points) consider(q);
     for (const p of this.store.design.parts) {
+      current = p.id;
       const def = getDef(p.type);
       if (def.compartment || def.envelope || p.type === 'hullSides') continue;
       if (isSegmentLike(p)) for (const w of endpoints(p)) consider(new THREE.Vector3(...w));
@@ -157,10 +179,16 @@ export class Draw3D {
         if (!p.points) for (const sx of [-1, 1]) for (const sy of [-1, 1]) for (const sz of [-1, 1]) consider(new THREE.Vector3(...localToWorld(p, [sx * hx, sy * hy, sz * hz])));
       }
     }
-    if (best) return { p: (best as THREE.Vector3).clone(), kind: 'point' };
+    if (best) return { p: (best as THREE.Vector3).clone(), kind: 'point', target: owner };
+    // Pull onto the centre line when the pointer is close to it on screen.
+    const toCentre = (p: THREE.Vector3) => {
+      const a = toScreen(p), b = toScreen(new THREE.Vector3(0, p.y, p.z));
+      if (a && b && Math.hypot(a.x - b.x, a.y - b.y) < SNAP_PX) p.x = 0;
+      return p;
+    };
     // 2. A part's surface.
     const hit = this.host.pickPoint(e);
-    if (hit) return { p: this.lock(hit), kind: 'surface' };
+    if (hit) return { p: toCentre(this.lock(hit)), kind: 'surface', target: this.host.pickId(e) ?? undefined };
     // 3. The working plane.
     const last = this.points[this.points.length - 1];
     const ray = this.host.rayFrom(e);
@@ -181,7 +209,7 @@ export class Draw3D {
       if (Math.abs(plane.normal.y) > 0.9) { p.x = Math.round(p.x / s) * s; p.z = Math.round(p.z / s) * s; }
       else { p.y = Math.round(p.y / s) * s; }
     }
-    return { p: this.lock(p), kind: 'plane' };
+    return { p: toCentre(this.lock(p)), kind: 'plane' };
   }
 
   /** Lock onto the X, Y or Z axis through the last point when nearly aligned. */
@@ -206,6 +234,14 @@ export class Draw3D {
     this.line.geometry.dispose();
     this.line.geometry = new THREE.BufferGeometry().setFromPoints(pts);
     this.marker.visible = !!this.hover;
+    const t = this.hover?.target ? this.store.get(this.hover.target) : undefined;
+    this.targetBox.visible = !!t;
+    if (t) {
+      this.targetBox.position.set(...t.position);
+      this.targetBox.rotation.set(t.rotation[0], t.rotation[1], t.rotation[2], 'XYZ');
+      this.targetBox.scale.set(Math.max(t.size[0], 0.01), Math.max(t.size[1], 0.01), Math.max(t.size[2], 0.01));
+      (this.targetBox.material as THREE.LineBasicMaterial).color.setHex(this.hover!.kind === 'point' ? 0xffd35a : 0x7dffb0);
+    }
     if (this.hover) {
       this.marker.position.copy(this.hover.p);
       this.markerMat.color.setHex(this.hover.kind === 'point' ? 0xffd35a : this.hover.kind === 'surface' ? 0x7dffb0 : 0x6fb6ff);

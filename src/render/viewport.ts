@@ -196,6 +196,7 @@ export class Viewport {
       get snap() { return self.snap; },
       rayFrom: (e) => { this.setPointer(e); return this.raycaster.ray.clone(); },
       pickPoint: (e) => this.pick(e)?.point ?? null,
+      pickId: (e) => this.pick(e)?.id ?? null,
       onStatus: (m) => this.onStatus(m),
     }, store, () => this.penOptions());
     this.bindPointer();

@@ -1,5 +1,5 @@
 import { getDef } from './catalog';
-import { mirrorTransform } from './geometry';
+import { mirrorShapeData, mirrorTransform } from './geometry';
 import { clonePart, newDesign, newId, type Design, type DesignLayer, type DesignSettings, type PartInstance, type PropValue, type Vec3 } from './types';
 
 type Listener = () => void;
@@ -143,6 +143,8 @@ export class Store {
           const m = mirrorTransform(p.position, p.rotation);
           t.position = m.position;
           t.rotation = m.rotation;
+          // Shaped outlines and cut-outs must be mirrored too, or the twin comes out skewed.
+          Object.assign(t, mirrorShapeData(p));
           t.mirrorOf = p.id;
           p.mirrorOf = t.id;
           this.design.parts.push(t);
@@ -179,9 +181,9 @@ export class Store {
         t.size = [...p.size] as Vec3;
         t.material = p.material;
         if (patch.props) Object.assign(t.props, patch.props);
-        if ('points' in patch) t.points = p.points?.map((v, i) => (i % 3 === 0 ? -v : v));
-        // Hole coordinates are (x, z) pairs; the twin's local X is mirrored.
-        if ('holes' in patch) t.holes = p.holes?.map((h) => h.map((v, i) => (i % 2 === 0 && p.type !== 'hullSides' ? -v : v)));
+        const mirrored = mirrorShapeData(p);
+        if ('points' in patch) t.points = mirrored.points;
+        if ('holes' in patch) t.holes = mirrored.holes;
       }
     };
     if (record) this.commit(apply);

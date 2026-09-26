@@ -259,3 +259,37 @@ describe('ramps, ladders and cut-outs', () => {
     expect(twin.holes![0][0]).toBeCloseTo(0.5);
   });
 });
+
+describe('mirroring shaped parts, freeform floors and panels', () => {
+  test('a 3D framing sheet and its mirror twin are true mirror images', async () => {
+    const { framePolygon3D, deckCorners } = await import('../src/core/pens');
+    const pts: [number, number, number][] = [[1, 0, 0], [3, 0.5, 0], [3.2, 2, 2], [1.2, 1.8, 2.5]];
+    const f = framePolygon3D(pts, opts, [0, 1, 1])!;
+    const s = new Store();
+    s.addParts([f]);
+    const twin = s.twin(s.get(f.id)!)!;
+    const mine = deckCorners(s.get(f.id)!).map((w) => w.map((v) => +v.toFixed(3)));
+    const theirs = deckCorners(twin).map((w) => [-w[0], w[1], w[2]].map((v) => +v.toFixed(3)));
+    for (const c of mine) expect(theirs).toContainEqual(c);
+  });
+
+  test('a freeform floor fills the clicked outline', async () => {
+    const { drawFloorPolygon, deckCorners } = await import('../src/core/pens');
+    const tri = [{ u: 0, v: 0 }, { u: 4, v: 0 }, { u: 0, v: 3 }];
+    const f = drawFloorPolygon(tri, opts, 2)!;
+    const corners = deckCorners(f).map((w) => w.map((v) => +v.toFixed(3)));
+    expect(corners).toContainEqual([0, 2, 0]);
+    expect(corners).toContainEqual([0, 2, 4]);
+    expect(corners).toContainEqual([3, 2, 0]);
+  });
+
+  test('side-profile panels go on both side walls', async () => {
+    const { drawPanel, deckCorners } = await import('../src/core/pens');
+    const quad = [{ u: 0, v: 0 }, { u: 3, v: 0 }, { u: 3, v: 2 }, { u: 0, v: 2 }];
+    const parts = drawPanel('side', quad, opts, 2, true);
+    expect(parts).toHaveLength(2);
+    const xs = parts.map((p) => deckCorners(p)[0][0]);
+    expect(xs.map((x) => +Math.abs(x).toFixed(3))).toEqual([2, 2]);
+    expect(Math.sign(xs[0])).not.toBe(Math.sign(xs[1]));
+  });
+});

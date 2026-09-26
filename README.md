@@ -32,13 +32,13 @@ real part, so it shows up in 3D with its weight and strength.
 
 | Pen | Side profile | Top plan |
 |---|---|---|
-| **Floor** | a horizontal line through the middle of the floor, *Width* wide. Started on a face, it sits on top of it or hangs beneath it | a rectangle on the active layer |
+| **Floor** | a horizontal line through the middle of the floor, *Width* wide. Started on a face, it sits on top of it or hangs beneath it | a rectangle on the active layer, or **Freeform**: click any number of corners and close the shape |
 | **Floor + ceiling** | floor, ceiling *Ceiling height* above it, and the room between | same, as a rectangle |
 | **Supports** | beams and pillars, snapped to horizontal and vertical (Shift for any angle), placed against both side walls or on the centre line | click, click for a horizontal beam under the active deck (on the ground if there are no decks yet); double-click for a standing pillar |
 | **Ramp / stairs** | draw from one floor edge to another: a sloped floor or a flight of stairs between them | draw the run; it climbs the set *Rise* from the active deck |
 | **Ladder** | draw it from floor to floor (upright by default, Shift to lean) | click where it stands |
 | **Cut-out** | two corners of a rectangle over a hull wall or a wall frame | two corners over a floor or roof sheet on the active deck |
-| **Framing** | the outline of the craft, point by point, in thin planking or metal sheet. Each section spans the width. Click the first point again to close the loop and seal the hull | walls standing on the active layer |
+| **Framing** | **Outline**: the outline of the craft, point by point, in thin planking or metal sheet. Each section spans the width. Click the first point again to close the loop and seal the hull. **Panel**: click out a flat panel on the sides of the craft, on both side walls or the centre line | **Outline**: walls standing on the active layer. **Panel**: a flat sheet of any shape (roof, deck plate, platform) at the deck's height |
 
 Framing is thin sheet: pine, oak or skywood planking, or iron, steel,
 aluminium, bronze or mythril sheet. You set the thickness in millimetres.
@@ -74,7 +74,16 @@ snapping off. Parts still snap to each other. Holding **Alt** places a
 single point freely. Lines drawn from a point land on grid lines, not on
 grid steps counted from their start.
 
-**Snapping and connecting:** pens and drags snap in this order:
+**Snapping and connecting:** the edge or centre line you're about to snap
+to lights up (yellow for a point, green for a face or line). Along a face,
+the snap stops where a background grid line crosses it. The red **centre
+line** (the mirror line, in the top plan and in 3D) is a snap target too.
+With Mirror on, a beam drawn straight out from the centre line becomes one
+piece spanning both sides. A support started or ended on the end of
+another support and turning a corner makes a clean L-joint: it sits on
+the end face, flush with the outer edge.
+
+Pens and drags snap in this order:
 - the ends of a part's centre line and every corner of its outline (yellow
   circle)
 - a part's faces or centre line (green diamond)

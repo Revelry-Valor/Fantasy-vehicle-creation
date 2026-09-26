@@ -207,6 +207,19 @@ export function partArea(p: PartInstance): number {
   return shapeArea(getDef(p.type).shape, p.size);
 }
 
+/**
+ * Mirror a part's own shape data to go with a mirrored transform: outlines
+ * and cut-outs are stored in local coordinates whose X flips too (hull side
+ * walls store theirs in the Z/Y plane, which doesn't).
+ */
+export function mirrorShapeData(p: PartInstance): Pick<PartInstance, 'points' | 'holes'> {
+  const flipX = p.type !== 'hullSides' && p.type !== 'hullShell';
+  return {
+    points: p.points?.map((v, i) => (i % 3 === 0 && p.type !== 'hullSides' ? -v : v)),
+    holes: p.holes?.map((h) => h.map((v, i) => (i % 2 === 0 && flipX ? -v : v))),
+  };
+}
+
 /** Mirror a transform across the X = 0 plane. */
 export function mirrorTransform(position: Vec3, rotation: Vec3): { position: Vec3; rotation: Vec3 } {
   // Reflection across YZ-plane: x → −x. For a rotation R, the mirrored
