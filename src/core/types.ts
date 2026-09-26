@@ -26,6 +26,12 @@ export interface PartInstance {
   props: Record<string, PropValue>;
   /** Custom vertex cloud for generated shells (flat xyz list, local space). */
   points?: number[];
+  /**
+   * Cut-outs in a flat sheet (floor, framing, hull side walls), each a flat
+   * [a0, b0, a1, b1, …] polygon in the sheet's own 2D coordinates: local X/Z
+   * for floors and framing, Z/Y for hull side walls.
+   */
+  holes?: number[][];
 }
 
 export type Environment = 'land' | 'air' | 'water' | 'underwater' | 'space';
@@ -88,5 +94,6 @@ export function clonePart(p: PartInstance): PartInstance {
     size: [...p.size] as Vec3,
     props: { ...p.props },
     points: p.points ? [...p.points] : undefined,
+    holes: p.holes ? p.holes.map((h) => [...h]) : undefined,
   };
 }

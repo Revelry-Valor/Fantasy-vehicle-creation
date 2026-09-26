@@ -158,7 +158,7 @@ export class Store {
    * Apply a change to a part and keep its mirror twin in sync. Pass
    * `record=false` for live drags where history was captured at drag start.
    */
-  updatePart(id: string, patch: Partial<Pick<PartInstance, 'position' | 'rotation' | 'size' | 'material' | 'name' | 'points'>> & { props?: Record<string, PropValue> }, record = true) {
+  updatePart(id: string, patch: Partial<Pick<PartInstance, 'position' | 'rotation' | 'size' | 'material' | 'name' | 'points' | 'holes'>> & { props?: Record<string, PropValue> }, record = true) {
     const apply = () => {
       const p = this.get(id);
       if (!p) return;
@@ -168,6 +168,7 @@ export class Store {
       if (patch.material) p.material = patch.material;
       if (patch.name !== undefined) p.name = patch.name;
       if ('points' in patch) p.points = patch.points;
+      if ('holes' in patch) p.holes = patch.holes;
       if (patch.props) Object.assign(p.props, patch.props);
       const t = this.twin(p);
       if (t) {
@@ -179,6 +180,8 @@ export class Store {
         t.material = p.material;
         if (patch.props) Object.assign(t.props, patch.props);
         if ('points' in patch) t.points = p.points?.map((v, i) => (i % 3 === 0 ? -v : v));
+        // Hole coordinates are (x, z) pairs; the twin's local X is mirrored.
+        if ('holes' in patch) t.holes = p.holes?.map((h) => h.map((v, i) => (i % 2 === 0 && p.type !== 'hullSides' ? -v : v)));
       }
     };
     if (record) this.commit(apply);

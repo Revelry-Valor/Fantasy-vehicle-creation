@@ -2,7 +2,7 @@ import { getDef } from '../core/catalog';
 import { localToWorld, worldAABB } from '../core/geometry';
 import { getMaterial } from '../core/materials';
 import {
-  DEFAULT_PEN_OPTIONS, halfDepth, type Anchor, deckCorners, deckOutline, drawFloor, drawFraming, drawHullSides, drawRoom, drawSupport, endpoints, floorTypeOf,
+  DEFAULT_PEN_OPTIONS, drawLadder, drawRamp, halfDepth, holeHitsSheet, mirrorPair, sheetHole, windowFor, type Anchor, deckCorners, deckOutline, drawFloor, drawFraming, drawHullSides, drawRoom, drawSupport, endpoints, floorTypeOf,
   isSegmentLike, layerOf, moveEndpoint, outwardSign, outOfPlane, resolveLayers, toPlane, toWorld, withDeckOutline, isSheet, facesView, planeToSheetLocal,
   type P2, type PenKind, type PenOptions, type PlaneView, type ResolvedLayer,
 } from '../core/pens';
@@ -34,13 +34,13 @@ interface Snap {
   guides: { u?: number; v?: number }[];
   /** The part this snapped onto, if any. */
   target?: string;
-  /** Outward normal of the face snapped onto (absent for centre lines and corners). */
-  normal?: P2;
+  /** Outward normal(s) of the face(s) at the snap: one on a face, two at a corner, none on a centre line. */
+  normals?: P2[];
   /** Out-of-plane position of the snapped point. */
   out?: number;
 }
 
-interface Connection { p: P2; id?: string; out?: number }
+interface Connection { p: P2; id?: string; out?: number; normals?: P2[] }
 
 const SNAP_PX = 11;
 const EDGE_PX = 8;
@@ -257,10 +257,28 @@ export class Blueprint {
         s.ends.forEach((p, i) => pts.push({ p, id: s.part.id, out: outOfPlane(this.view, w[i]) }));
       }
       const out = this.anchorOut(s.part);
-      for (const p of s.poly) pts.push({ p, id: s.part.id, out });
+      const n = s.poly.length;
+      const normals = edgeNormals(s.poly);
+      s.poly.forEach((p, i) => pts.push({ p, id: s.part.id, out, normals: [normals[(i + n - 1) % n], normals[i]] }));
+      for (const hole of this.holesInView(s.part)) {
+        const hn = edgeNormals(hole).map((q) => ({ u: -q.u, v: -q.v }));
+        const m = hole.length;
+        hole.forEach((p, i) => pts.push({ p, id: s.part.id, out, normals: [hn[(i + m - 1) % m], hn[i]] }));
+      }
     }
     for (const c of this.chain) pts.push({ p: c });
     return pts;
+  }
+
+  /** A sheet's cut-outs as polygons in this view (only where the view looks straight at the sheet). */
+  private holesInView(p: PartInstance): P2[][] {
+    if (!p.holes?.length) return [];
+    if (p.type === 'hullSides') {
+      if (this.view !== 'side') return [];
+      return p.holes.map((h) => pairs(h).map(([a, b]) => ({ u: p.position[2] + a, v: p.position[1] + b })));
+    }
+    if (!isSheet(p) || !facesView(p, this.view)) return [];
+    return p.holes.map((h) => pairs(h).map(([x, z]) => toPlane(this.view, localToWorld(p, [x, 0, z]))));
   }
 
   /** Out-of-plane position to inherit from a part: its offset in the side view, its height in the top plan (a pillar's top). */
@@ -282,9 +300,19 @@ export class Blueprint {
       if (len > 1e-6) {
         const step = opts.angle === 'hv' ? Math.PI / 2 : Math.PI / 12;
         const a = Math.round(Math.atan2(dv, du) / step) * step;
-        let l = len;
-        if (this.snapStep) l = Math.max(this.snapStep, Math.round(l / this.snapStep) * this.snapStep);
-        p = { u: opts.from.u + Math.cos(a) * l, v: opts.from.v + Math.sin(a) * l };
+        const c = Math.cos(a), sn = Math.sin(a);
+        const g = this.snapStep;
+        if (g && Math.abs(sn) < 1e-6) {
+          // Horizontal: end on a grid line.
+          p = { u: Math.round(raw.u / g) * g, v: opts.from.v };
+        } else if (g && Math.abs(c) < 1e-6) {
+          // Vertical: end on a grid line.
+          p = { u: opts.from.u, v: Math.round(raw.v / g) * g };
+        } else {
+          let l = len;
+          if (g) l = Math.max(g, Math.round(l / g) * g);
+          p = { u: opts.from.u + c * l, v: opts.from.v + sn * l };
+        }
         constrained = true;
       }
     }
@@ -297,16 +325,16 @@ export class Blueprint {
       const tie = best && Math.abs(d - bestD) < 1e-6 && (c.out ?? -Infinity) > (best.out ?? -Infinity);
       if (d < bestD - 1e-6 || tie) { bestD = d; best = c; }
     }
-    if (best) return { p: { ...best.p }, kind: 'point', guides, target: best.id, out: best.out };
+    if (best) return { p: { ...best.p }, kind: 'point', guides, target: best.id, out: best.out, normals: best.normals };
     if (constrained) {
       // Stretch a constrained line to meet a nearby surface along its own axis.
       const e = this.nearestEdge(p, exclude, opts.from);
-      if (e) return { p: e.p, kind: 'edge', guides, target: e.id, normal: e.normal, out: e.out };
+      if (e) return { p: e.p, kind: 'edge', guides, target: e.id, normals: e.normal ? [e.normal] : undefined, out: e.out };
       return { p, kind: 'grid', guides };
     }
     // 2. Surfaces and centre lines of other parts.
     const edge = this.nearestEdge(raw, exclude);
-    if (edge) return { p: edge.p, kind: 'edge', guides, target: edge.id, normal: edge.normal, out: edge.out };
+    if (edge) return { p: edge.p, kind: 'edge', guides, target: edge.id, normals: edge.normal ? [edge.normal] : undefined, out: edge.out };
     // 3. Line up with existing points, then 4. the grid.
     let alignedU = false, alignedV = false;
     for (const c of cps) {
@@ -348,6 +376,10 @@ export class Blueprint {
         test(a, b, s.part.id, out, { u: sign * (b.v - a.v) / len, v: -sign * (b.u - a.u) / len });
       }
       if (s.ends) test(s.ends[0], s.ends[1], s.part.id, out);
+      for (const hole of this.holesInView(s.part)) {
+        const hn = edgeNormals(hole);
+        hole.forEach((a, i) => test(a, hole[(i + 1) % hole.length], s.part.id, out, { u: -hn[i].u, v: -hn[i].v }));
+      }
     }
     return best;
   }
@@ -502,7 +534,7 @@ export class Blueprint {
     if (k === 'f') { this.fit(); return true; }
     if (k === 'v') { this.setTool('select'); return true; }
     if (k === 'tab') { e.preventDefault(); this.setView(this.view === 'side' ? 'top' : 'side'); this.onToolChange(); return true; }
-    const pens: Record<string, PenKind> = { '1': 'floor', '2': 'room', '3': 'support', '4': 'frame' };
+    const pens: Record<string, PenKind> = { '1': 'floor', '2': 'room', '3': 'support', '4': 'frame', '5': 'ramp', '6': 'ladder', '7': 'cutout' };
     if (pens[k]) { this.setTool('pen', { pen: pens[k] }); return true; }
     return false;
   }
@@ -602,7 +634,8 @@ export class Blueprint {
     if (d?.kind === 'vertex') return this.dragVertex(d, raw, e.altKey);
 
     if (this.tool === 'pen') {
-      this.hover = this.penSnap(raw, e.shiftKey);
+      // Alt: place exactly where the pointer is, no snapping at all.
+      this.hover = e.altKey ? { p: raw, kind: 'free', guides: [] } : this.penSnap(raw, e.shiftKey);
       this.status();
     } else if (this.tool === 'place') {
       this.hover = this.snap(raw);
@@ -718,8 +751,8 @@ export class Blueprint {
       const s = this.snap({ u: raw.u, v: from.v }, { from, angle: 'hv' });
       return { ...s, p: { u: s.p.u, v: from.v } };
     }
-    if (this.pen === 'support') return this.snap(raw, { from, angle: shift ? 'deg15' : 'hv' });
-    if (this.pen === 'frame') return this.snap(raw, { from, angle: shift ? 'deg15' : null });
+    if (this.pen === 'support' || this.pen === 'ladder') return this.snap(raw, { from, angle: shift ? 'deg15' : 'hv' });
+    if (this.pen === 'frame' || this.pen === 'ramp') return this.snap(raw, { from, angle: shift ? 'deg15' : null });
     return this.snap(raw, { from });
   }
 
@@ -749,20 +782,28 @@ export class Blueprint {
    * under a floor) instead of being centred on it.
    */
   private faceOffset(a: P2, b: P2, end: Snap): { a: P2; b: P2 } {
-    const n = this.chainStart?.normal ?? end.normal;
-    if (!n) return { a, b };
-    let shift = 0;
+    // Faces at the start of the stroke win; at a corner there are two to choose from.
+    const candidates = this.chainStart?.normals?.length ? this.chainStart.normals : end.normals ?? [];
+    if (!candidates.length) return { a, b };
+    const shiftBy = (n: P2, d: number) => ({ a: { u: a.u + n.u * d, v: a.v + n.v * d }, b: { u: b.u + n.u * d, v: b.v + n.v * d } });
     if ((this.pen === 'floor' || this.pen === 'room') && this.view === 'side') {
-      // The floor line is its walking surface, so only resting on top needs a lift.
-      if (n.v > 0.7) shift = floorTypeOf(this.opts).thickness;
-      return { a: { u: a.u, v: a.v + shift }, b: { u: b.u, v: b.v + shift } };
+      // Floors are centred on their line: sit on a top face, hang under a bottom face.
+      const n = candidates.find((q) => Math.abs(q.v) > 0.7);
+      if (!n) return { a, b };
+      return shiftBy({ u: 0, v: Math.sign(n.v) }, floorTypeOf(this.opts).thickness / 2);
     }
-    if (this.pen !== 'support' && this.pen !== 'frame') return { a, b };
+    if (this.pen !== 'support' && this.pen !== 'frame' && this.pen !== 'ramp') return { a, b };
     const len = Math.hypot(b.u - a.u, b.v - a.v) || 1;
     const perp = { u: -(b.v - a.v) / len, v: (b.u - a.u) / len };
-    if (Math.abs(perp.u * n.u + perp.v * n.v) < 0.7) return { a, b };
-    shift = halfDepth(this.view, this.pen, this.opts);
-    return { a: { u: a.u + n.u * shift, v: a.v + n.v * shift }, b: { u: b.u + n.u * shift, v: b.v + n.v * shift } };
+    // The face the stroke runs along is the one whose normal is across the stroke.
+    let n: P2 | null = null, bestDot = 0.7;
+    for (const q of candidates) {
+      const d = Math.abs(perp.u * q.u + perp.v * q.v);
+      if (d >= bestDot) { bestDot = d; n = q; }
+    }
+    if (!n) return { a, b };
+    const depth = this.pen === 'ramp' ? floorTypeOf(this.opts).thickness / 2 : halfDepth(this.view, this.pen, this.opts);
+    return shiftBy(n, depth);
   }
 
   private penClick(e: PointerEvent) {
@@ -776,6 +817,11 @@ export class Blueprint {
       // paired is left alone, other off-centre parts follow the mirror switch.
       this.store.addParts(parts, false);
     };
+    if (this.pen === 'ladder' && this.view === 'top') {
+      add(drawLadder('top', p, p, this.opts, layerY, this.store.design.settings.crewHeight));
+      this.onStatus(`Ladder placed, climbing ${this.opts.rampRise} m.`);
+      return;
+    }
     if (!this.chain.length) {
       this.chain = [p];
       this.chainParts = [];
@@ -806,6 +852,9 @@ export class Blueprint {
       case 'floor': add(drawFloor(this.view, a, b, this.opts, layerY, anchor)); this.chain = []; break;
       case 'room': add(drawRoom(this.view, a, b, this.opts, layerY, anchor)); this.chain = []; break;
       case 'support': add(drawSupport(this.view, a, b, this.opts, layerY, floorT, anchor)); this.chain = []; break;
+      case 'ramp': add(drawRamp(this.view, a, b, this.opts, layerY, anchor)); this.chain = []; break;
+      case 'ladder': add(drawLadder(this.view, start, p, this.opts, layerY, this.store.design.settings.crewHeight)); this.chain = []; break;
+      case 'cutout': this.cutOut(start, p); this.chain = []; break;
       case 'frame': {
         const closes = this.chain.length >= 3 && Math.hypot(p.u - this.chain[0].u, p.v - this.chain[0].v) < 1e-6;
         const parts = drawFraming(this.view, [a, b], this.opts, layerY, anchor);
@@ -813,7 +862,7 @@ export class Blueprint {
         this.chainParts.push(...parts.map((q) => q.id));
         this.chain.push(p);
         // Later segments carry on from where the last one ended.
-        this.chainStart = { ...s, normal: undefined };
+        this.chainStart = { ...s, normals: undefined };
         if (closes) {
           this.finishChain(true);
           return;
@@ -824,6 +873,41 @@ export class Blueprint {
     if (!this.chain.length) this.chainStart = null;
     this.status();
     this.invalidate();
+  }
+
+  /**
+   * Punch a rectangular hole through every sheet the view looks straight at
+   * under the rectangle (in the top plan: on the active deck only), and fit a
+   * window frame if asked.
+   */
+  private cutOut(a: P2, b: P2) {
+    if (Math.abs(b.u - a.u) < 0.05 || Math.abs(b.v - a.v) < 0.05) return;
+    const layers = this.layers();
+    const active = this.activeLayer();
+    const hits: { part: PartInstance; hole: number[] }[] = [];
+    for (const s of this.getShapes()) {
+      if (s.dim) continue;
+      const p = s.part;
+      if (this.view === 'top' && active && layerOf(p, layers)?.id !== active.id) continue;
+      const hole = sheetHole(p, this.view, a, b);
+      if (hole && holeHitsSheet(p, hole)) hits.push({ part: p, hole });
+    }
+    if (!hits.length) return this.onStatus('Nothing to cut here: draw the rectangle over a floor, framing sheet or hull wall that faces this view.');
+    const windows: PartInstance[] = [];
+    this.store.commit(() => {
+      const done = new Set<string>();
+      for (const { part, hole } of hits) {
+        if (done.has(part.id)) continue;
+        if (part.mirrorOf) done.add(part.mirrorOf);
+        this.store.updatePart(part.id, { holes: [...(part.holes ?? []), hole] }, false);
+        if (this.opts.cutoutStyle === 'window') {
+          const w = windowFor(part, hole, this.opts);
+          windows.push(...(part.type === 'hullSides' ? mirrorPair(w) : [w]));
+        }
+      }
+    });
+    if (windows.length) this.store.addParts(windows, false);
+    this.onStatus(`Cut ${hits.length} opening${hits.length > 1 ? 's' : ''} (${Math.abs(b.u - a.u).toFixed(2)} × ${Math.abs(b.v - a.v).toFixed(2)} m). Its corners and edges are snap points.`);
   }
 
   /** End the current framing chain: fix which side is "outside", close the hull. */
@@ -873,12 +957,15 @@ export class Blueprint {
     if (this.tool === 'select') return this.onStatus('Click to select · drag to move · drag an end dot to move just that end · drag empty space to box-select · right-drag or Space-drag to pan');
     if (this.tool === 'layer') return this.onStatus('Click a floor to make it a layer.');
     if (this.tool === 'place') return this.onStatus(`Click to place ${this.placeType ? getDef(this.placeType).name : 'part'}${this.view === 'top' ? ' on the active layer' : ''}. Esc to stop.`);
-    const names: Record<PenKind, string> = { floor: 'Floor', room: 'Floor + ceiling', support: 'Supports', frame: 'Framing' };
+    const names: Record<PenKind, string> = { floor: 'Floor', room: 'Floor + ceiling', support: 'Supports', frame: 'Framing', ramp: this.opts.rampStyle === 'stairs' ? 'Stairs' : 'Ramp', ladder: 'Ladder', cutout: 'Cut-out' };
     const started = this.chain.length > 0;
     let hint = '';
     if (this.pen === 'frame') hint = started ? 'Click to add the next point · click the first point to close the hull · Enter/Esc/double-click to finish · Shift = 15° steps' : 'Click to start drawing the outline';
     else if (this.pen === 'support' && this.view === 'top') hint = started ? 'Click to end the beam · click the same spot again for a pillar' : 'Click to start a beam · double-click to stand a pillar';
     else if (this.view === 'top' && (this.pen === 'floor' || this.pen === 'room')) hint = started ? 'Click the opposite corner' : 'Click the first corner';
+    else if (this.pen === 'cutout') hint = started ? 'Click the opposite corner of the opening' : 'Click one corner of the opening over a floor, framing sheet or hull wall';
+    else if (this.pen === 'ladder' && this.view === 'top') hint = `Click where the ladder stands (climbs ${this.opts.rampRise} m)`;
+    else if (this.pen === 'ramp') hint = started ? 'Click the top (or bottom) end · Shift = 15° steps' : this.view === 'top' ? `Click where it starts; it climbs ${this.opts.rampRise} m` : 'Click one floor edge';
     else hint = started ? 'Click to finish' + (this.pen === 'support' ? ' · Shift = any angle' : '') : 'Click to start';
     const len = started && this.hover ? ` · ${Math.hypot(this.hover.p.u - this.chain[this.chain.length - 1].u, this.hover.p.v - this.chain[this.chain.length - 1].v).toFixed(2)} m` : '';
     this.onStatus(`${names[this.pen]}: ${hint}${len}`);
@@ -1037,6 +1124,20 @@ export class Blueprint {
     ctx.lineWidth = selected ? 2.5 : hovered ? 2 : 1;
     ctx.stroke();
     ctx.setLineDash([]);
+    // Cut-outs: show the background through them.
+    for (const hole of this.holesInView(s.part)) {
+      const hp = hole.map((q) => this.toScreen(q));
+      ctx.beginPath();
+      hp.forEach((q, i) => (i ? ctx.lineTo(q.x, q.y) : ctx.moveTo(q.x, q.y)));
+      ctx.closePath();
+      ctx.fillStyle = getComputedStyle(document.documentElement).getPropertyValue('--bp-bg').trim() || '#0f2438';
+      ctx.fill();
+      ctx.setLineDash([4, 3]);
+      ctx.strokeStyle = selected ? '#5fb4ff' : 'rgba(210,230,255,0.7)';
+      ctx.lineWidth = 1.5;
+      ctx.stroke();
+      ctx.setLineDash([]);
+    }
     if (above) { ctx.globalAlpha = 1; return; }
     // Framing skins: a bold line on the plated face(s).
     if (s.part.type === 'frame' && s.ends) {
@@ -1104,7 +1205,7 @@ export class Blueprint {
     if (!this.chain.length) return;
     const a = this.chain[this.chain.length - 1];
     const A = this.toScreen(a);
-    const rect = this.view === 'top' && (this.pen === 'floor' || this.pen === 'room');
+    const rect = (this.view === 'top' && (this.pen === 'floor' || this.pen === 'room')) || this.pen === 'cutout';
     ctx.strokeStyle = '#ffd35a';
     ctx.fillStyle = 'rgba(255,211,90,0.15)';
     ctx.lineWidth = 2;
@@ -1240,6 +1341,23 @@ function pointInPolygon(p: P2, poly: P2[]): boolean {
     if ((a.v > p.v) !== (b.v > p.v) && p.u < ((b.u - a.u) * (p.v - a.v)) / (b.v - a.v) + a.u) inside = !inside;
   }
   return inside;
+}
+
+/** Flat [a0, b0, a1, b1, …] → [[a0, b0], [a1, b1], …]. */
+function pairs(flat: number[]): [number, number][] {
+  const out: [number, number][] = [];
+  for (let i = 0; i + 1 < flat.length; i += 2) out.push([flat[i], flat[i + 1]]);
+  return out;
+}
+
+/** Outward unit normal of each edge (i → i+1) of a polygon, whichever way it winds. */
+function edgeNormals(poly: P2[]): P2[] {
+  const sign = signedArea(poly) >= 0 ? 1 : -1;
+  return poly.map((a, i) => {
+    const b = poly[(i + 1) % poly.length];
+    const len = Math.hypot(b.u - a.u, b.v - a.v) || 1;
+    return { u: sign * (b.v - a.v) / len, v: -sign * (b.u - a.u) / len };
+  });
 }
 
 function signedArea(poly: P2[]): number {

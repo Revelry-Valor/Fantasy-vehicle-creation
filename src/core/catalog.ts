@@ -3,7 +3,7 @@ import type { PropValue, Vec3 } from './types';
 export type Layer = 'structure' | 'hull' | 'interior' | 'systems' | 'propulsion' | 'mechanism' | 'compartment';
 
 export type Shape =
-  | 'box' | 'tube' | 'cylinderY' | 'ellipsoid' | 'rib' | 'truss' | 'hullShell' | 'boatHull' | 'capsule' | 'frame' | 'profile'
+  | 'box' | 'tube' | 'cylinderY' | 'ellipsoid' | 'rib' | 'truss' | 'hullShell' | 'boatHull' | 'capsule' | 'frame' | 'profile' | 'opening'
   | 'wing' | 'fin' | 'propeller' | 'engine' | 'sail' | 'nozzle' | 'crystal' | 'screw'
   | 'wheel' | 'track' | 'leg'
   | 'crew' | 'seat' | 'bench' | 'bunk' | 'bed' | 'table' | 'lavatory' | 'stove' | 'helm' | 'ladder' | 'stairs' | 'railing'
@@ -270,6 +270,10 @@ export const CATALOG: PartDef[] = [
     description: 'Hinged door. Open doors ventilate compartments.', defaultSize: [0.9, 2.05, 0.08], defaultMaterial: 'oak', massMode: 'fixed', mass: 35, scalesWithCrew: true, surfaceAxis: 'z', mechanism: 'door' },
   { type: 'porthole', name: 'Window / Porthole', category: 'Doors & Windows', layer: 'hull', shape: 'porthole',
     description: 'Round glazed window.', defaultSize: [0.6, 0.6, 0.1], defaultMaterial: 'brass', massMode: 'fixed', mass: 18, surfaceAxis: 'z' },
+  { type: 'window', name: 'Window Frame', category: 'Doors & Windows', layer: 'hull', shape: 'opening',
+    description: 'A framed opening set into a sheet. Glazed or open; the Cut-out pen makes these and punches the hole.',
+    defaultSize: [1, 0.06, 1], defaultMaterial: 'brass', massMode: 'fixed', mass: 25, surfaceAxis: 'y',
+    defaultProps: { glazed: true } },
   { type: 'hatch', name: 'Hatch', category: 'Doors & Windows', layer: 'hull', shape: 'hatch',
     description: 'Deck hatch.', defaultSize: [0.9, 0.08, 0.9], defaultMaterial: 'oak', massMode: 'fixed', mass: 30, surfaceAxis: 'y', mechanism: 'door' },
   { type: 'ramp', name: 'Cargo Ramp', category: 'Doors & Windows', layer: 'hull', shape: 'ramp',

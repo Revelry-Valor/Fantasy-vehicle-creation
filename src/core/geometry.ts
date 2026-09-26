@@ -171,9 +171,31 @@ export function outlineAreaXZ(points: number[]): number {
   return Math.abs(a) / 2;
 }
 
+/** Area of a flat 2D polygon given as [a0, b0, a1, b1, …]. */
+export function polyArea2(flat: number[]): number {
+  let a = 0;
+  const n = flat.length / 2;
+  for (let i = 0; i < n; i++) {
+    const j = (i + 1) % n;
+    a += flat[i * 2] * flat[j * 2 + 1] - flat[j * 2] * flat[i * 2 + 1];
+  }
+  return Math.abs(a) / 2;
+}
+
+/** Total area of a sheet's cut-outs, m². */
+export function holesArea(p: PartInstance): number {
+  return (p.holes ?? []).reduce((s, h) => s + polyArea2(h), 0);
+}
+
+/** Face area of a flat sheet: its outline minus its cut-outs. */
+export function sheetArea(p: PartInstance): number {
+  const outline = p.points && p.points.length >= 9 ? outlineAreaXZ(p.points) : p.size[0] * p.size[2];
+  return Math.max(0, outline - holesArea(p));
+}
+
 export function partVolume(p: PartInstance): number {
   // A floor with a drawn outline: outline area × thickness.
-  if ((p.type === 'deck' || p.type === 'frame') && p.points && p.points.length >= 9) return outlineAreaXZ(p.points) * p.size[1];
+  if ((p.type === 'deck' || p.type === 'frame') && ((p.points && p.points.length >= 9) || p.holes?.length)) return sheetArea(p) * p.size[1];
   if ((p.type === 'hullShell' || p.type === 'hullSides') && typeof p.props.volume === 'number') return p.props.volume;
   return shapeVolume(getDef(p.type).shape, p.size);
 }
@@ -181,7 +203,7 @@ export function partVolume(p: PartInstance): number {
 export function partArea(p: PartInstance): number {
   if (p.type === 'hullShell' && typeof p.props.area === 'number') return p.props.area;
   // Both side walls of a drawn hull.
-  if (p.type === 'hullSides' && typeof p.props.area === 'number') return p.props.area * 2;
+  if (p.type === 'hullSides' && typeof p.props.area === 'number') return Math.max(0, p.props.area - holesArea(p)) * 2;
   return shapeArea(getDef(p.type).shape, p.size);
 }
 

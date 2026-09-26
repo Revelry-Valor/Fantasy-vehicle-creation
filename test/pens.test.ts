@@ -13,14 +13,15 @@ describe('pens', () => {
     expect(f.size[0]).toBe(4);
     expect(f.size[2]).toBe(8);
     expect(f.position[2]).toBe(1);
-    expect(f.position[1] + f.size[1] / 2).toBeCloseTo(1); // top surface on the line
+    expect(f.position[1]).toBeCloseTo(1); // centred on the drawn line
   });
 
   test('room makes floor, ceiling and an air volume', () => {
     const parts = drawRoom('side', { u: 0, v: 0 }, { u: 4, v: 0 }, { ...opts, ceilingHeight: 2.5 });
     expect(parts.map((p) => p.type)).toEqual(['deck', 'deck', 'compartment']);
-    const ceiling = parts[1];
-    expect(ceiling.position[1] - ceiling.size[1] / 2).toBeCloseTo(2.5);
+    const [floor, ceiling] = parts;
+    const floorTop = floor.position[1] + floor.size[1] / 2;
+    expect(ceiling.position[1] - ceiling.size[1] / 2).toBeCloseTo(floorTop + 2.5);
   });
 
   test('side supports come as a mirrored pair against the walls', () => {
@@ -86,7 +87,7 @@ describe('editing', () => {
     const [f] = drawFloor('side', { u: 0, v: 3 }, { u: 4, v: 3 }, opts);
     s.addParts([f]);
     s.makeLayer(f.id);
-    expect(resolveLayers(s.design)[0].y).toBeCloseTo(3);
+    expect(resolveLayers(s.design)[0].y).toBeCloseTo(3 + f.size[1] / 2);
     s.updatePart(f.id, { position: [0, 5 - f.size[1] / 2, 2] });
     expect(resolveLayers(s.design)[0].y).toBeCloseTo(5);
     s.removeParts([f.id]);
@@ -199,5 +200,62 @@ describe('connections, armor and 3D', () => {
     expect(f.props.outSign).toBeDefined();
     const n = rotationMatrix(f.rotation);
     expect(n[1] * Number(f.props.outSign)).toBeGreaterThan(0);
+  });
+});
+
+describe('ramps, ladders and cut-outs', () => {
+  test('a ramp joins two floor levels', async () => {
+    const { drawRamp } = await import('../src/core/pens');
+    const [r] = drawRamp('side', { u: 0, v: 0 }, { u: 4, v: 2 }, opts);
+    expect(r.type).toBe('deck');
+    const [a, b] = endpoints(r).sort((p, q) => p[1] - q[1]);
+    expect(a[1]).toBeCloseTo(0);
+    expect(b[1]).toBeCloseTo(2);
+    expect(b[2]).toBeCloseTo(4);
+  });
+
+  test('stairs climb the right way', async () => {
+    const { drawRamp } = await import('../src/core/pens');
+    const [s] = drawRamp('side', { u: 4, v: 0 }, { u: 0, v: 2 }, { ...opts, rampStyle: 'stairs' });
+    expect(s.type).toBe('stairs');
+    expect(s.size[1]).toBeCloseTo(2);
+    expect(s.size[2]).toBeCloseTo(4);
+    // Local +Z (the climbing direction) points from the low end (u = 4) toward the high end (u = 0).
+    const m = rotationMatrix(s.rotation);
+    expect(m[8]).toBeLessThan(0);
+  });
+
+  test('a ladder stands along the drawn line', async () => {
+    const { drawLadder } = await import('../src/core/pens');
+    const [l] = drawLadder('side', { u: 1, v: 0 }, { u: 1, v: 3 }, opts);
+    expect(l.size[1]).toBeCloseTo(3);
+    expect(l.position[1]).toBeCloseTo(1.5);
+    expect(Math.abs(l.rotation[0])).toBeCloseTo(0);
+  });
+
+  test('cutting a window out of a framing sheet removes its weight', async () => {
+    const { sheetHole, holeHitsSheet, windowFor } = await import('../src/core/pens');
+    const { dryMass } = await import('../src/core/analysis');
+    // A wall drawn in the top plan faces the side profile.
+    const [wall] = drawFraming('top', [{ u: 0, v: 1 }, { u: 4, v: 1 }], { ...opts, ceilingHeight: 2.4 }, 0);
+    const full = dryMass(wall);
+    const hole = sheetHole(wall, 'side', { u: 1, v: 1 }, { u: 2, v: 2 })!;
+    expect(hole).not.toBeNull();
+    expect(holeHitsSheet(wall, hole)).toBe(true);
+    const cut = { ...wall, holes: [hole] };
+    // 1 m² out of a 4 × 2.4 m sheet.
+    expect(dryMass(cut) / full).toBeCloseTo(1 - 1 / 9.6, 3);
+    const win = windowFor(wall, hole, opts);
+    expect(win.position[1]).toBeCloseTo(1.5);
+    expect(win.position[2]).toBeCloseTo(1.5);
+  });
+
+  test('cut-outs mirror onto the twin', () => {
+    const s = new Store();
+    const [f] = drawFloor('top', { u: 0, v: 1 }, { u: 4, v: 3 }, opts, 0);
+    s.addParts([f]);
+    s.updatePart(f.id, { holes: [[-0.5, -0.5, 0.5, -0.5, 0.5, 0.5, -0.5, 0.5]] });
+    const twin = s.twin(s.get(f.id)!)!;
+    expect(twin.holes![0][0]).toBeCloseTo(0.5);
   });
 });

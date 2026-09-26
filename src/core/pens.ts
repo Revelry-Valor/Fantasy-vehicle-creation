@@ -12,7 +12,7 @@ import { newId, type Design, type PartInstance, type Vec3 } from './types';
  */
 
 export type PlaneView = 'side' | 'top';
-export type PenKind = 'floor' | 'room' | 'support' | 'frame';
+export type PenKind = 'floor' | 'room' | 'support' | 'frame' | 'ramp' | 'ladder' | 'cutout';
 export type SupportType = 'beam' | 'ibeam' | 'strut' | 'truss';
 
 export interface P2 { u: number; v: number }
@@ -99,12 +99,23 @@ export interface PenOptions {
   armorMaterial: string;
   armorSide: ArmorSide;
   skinThickness: number;
+  /** Ramp pen: a smooth sloped floor or a flight of stairs. */
+  rampStyle: 'ramp' | 'stairs';
+  /** Top plan: how far a ramp or ladder climbs, m. */
+  rampRise: number;
+  /** Cut-out pen: leave the hole open or fit a glazed window. */
+  cutoutStyle: 'open' | 'window';
+  windowFrame: string;
 }
 
 export const DEFAULT_PEN_OPTIONS: PenOptions = {
   floorType: 'pine',
   width: 4,
   ceilingHeight: 2.4,
+  rampStyle: 'ramp',
+  rampRise: 2.4,
+  cutoutStyle: 'window',
+  windowFrame: 'brass',
   supportType: 'beam',
   supportMaterial: 'oak',
   supportSize: 0.2,
@@ -171,8 +182,9 @@ export function floorTypeOf(opts: PenOptions): FloorType {
 }
 
 /**
- * Floor pen. Side view: a horizontal line marking the walking surface, `width`
- * wide. Top view: a rectangle at the active layer's elevation.
+ * Floor pen. Side view: a horizontal line through the middle of the floor,
+ * `width` wide (the editor lifts it onto a surface it starts on). Top view: a
+ * rectangle whose top sits at the active layer's elevation.
  */
 export function drawFloor(view: PlaneView, a: P2, b: P2, opts: PenOptions, layerY = 0, anchor: Anchor = {}): PartInstance[] {
   const ft = floorTypeOf(opts);
@@ -181,7 +193,7 @@ export function drawFloor(view: PlaneView, a: P2, b: P2, opts: PenOptions, layer
     const y = a.v;
     const len = Math.abs(b.u - a.u);
     if (len < 0.05) return [];
-    return [named(part('deck', [0, y - t / 2, (a.u + b.u) / 2], [anchor.width ?? opts.width, t, len], [0, 0, 0], ft.material), 'Floor')];
+    return [named(part('deck', [0, y, (a.u + b.u) / 2], [anchor.width ?? opts.width, t, len], [0, 0, 0], ft.material), 'Floor')];
   }
   const len = Math.abs(b.u - a.u), wid = Math.abs(b.v - a.v);
   if (len < 0.05 || wid < 0.05) return [];
@@ -237,6 +249,105 @@ export function drawSupport(view: PlaneView, a: P2, b: P2, opts: PenOptions, lay
   const tr = segmentTransform(view, a, b, x);
   const p = named(part(type, tr.position, size, tr.rotation, opts.supportMaterial), 'Support');
   return x > 0.02 ? mirrorPair(p) : [p];
+}
+
+/** A floor slab running up a slope from a to b (3D points), `width` wide. */
+function slopedDeck(a: Vec3, b: Vec3, width: number, opts: PenOptions): PartInstance | null {
+  const A = new Vector3(...a), B = new Vector3(...b);
+  const dir = B.clone().sub(A);
+  const len = dir.length();
+  if (len < 0.05) return null;
+  const z = dir.normalize();
+  let x = new Vector3(0, 1, 0).cross(z);
+  if (x.lengthSq() < 1e-6) x = new Vector3(1, 0, 0);
+  x.normalize();
+  const y = z.clone().cross(x).normalize();
+  const ft = floorTypeOf(opts);
+  const mid = A.clone().add(B).multiplyScalar(0.5);
+  return named(part('deck', [mid.x, mid.y, mid.z], [width, ft.thickness, len], basisRotation(x, y, z), ft.material), 'Ramp');
+}
+
+/** Stairs climbing from a to b (3D points): the flight rises along its local +Z. */
+function stairsBetween(a: Vec3, b: Vec3, width: number, opts: PenOptions): PartInstance | null {
+  const low = a[1] <= b[1] ? a : b, high = a[1] <= b[1] ? b : a;
+  const dx = high[0] - low[0], dz = high[2] - low[2];
+  const run = Math.hypot(dx, dz), rise = high[1] - low[1];
+  if (run < 0.1 || rise < 0.1) return null;
+  const mid: Vec3 = [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2, (a[2] + b[2]) / 2];
+  return named(part('stairs', mid, [width, rise, run], [0, Math.atan2(dx, dz), 0], floorTypeOf(opts).material), 'Stairs');
+}
+
+/**
+ * Ramp pen: a sloped floor (or stairs) joining two levels. Side view: draw
+ * from one floor edge to the other. Top plan: draw the run; it climbs
+ * `rampRise` from the active layer.
+ */
+export function drawRamp(view: PlaneView, a: P2, b: P2, opts: PenOptions, layerY = 0, anchor: Anchor = {}): PartInstance[] {
+  let A: Vec3, B: Vec3, width: number;
+  if (view === 'side') {
+    A = [0, a.v, a.u]; B = [0, b.v, b.u];
+    width = Math.min(anchor.width ?? opts.width, opts.width);
+  } else {
+    A = [a.v, layerY, a.u]; B = [b.v, layerY + opts.rampRise, b.u];
+    width = Math.max(0.6, opts.width / 3);
+  }
+  const p = opts.rampStyle === 'stairs' ? stairsBetween(A, B, width, opts) : slopedDeck(A, B, width, opts);
+  return p ? [p] : [];
+}
+
+/**
+ * Ladder pen. Side view: a ladder along the drawn line (usually straight up).
+ * Top plan: click where it stands; it climbs `rampRise` from the active layer.
+ */
+export function drawLadder(view: PlaneView, a: P2, b: P2, opts: PenOptions, layerY = 0, crewHeight = 1.8): PartInstance[] {
+  const w = +(0.5 * crewHeight / 1.8).toFixed(3);
+  if (view === 'top') {
+    const H = opts.rampRise;
+    return [named(part('ladder', [a.v, layerY + H / 2, a.u], [w, H, 0.1], [0, 0, 0]), 'Ladder')];
+  }
+  const du = b.u - a.u, dv = b.v - a.v;
+  const len = Math.hypot(du, dv);
+  if (len < 0.2) return [];
+  // The ladder's rails run along its local Y: tip that onto the drawn line.
+  return [named(part('ladder', [0, (a.v + b.v) / 2, (a.u + b.u) / 2], [w, len, 0.1], [Math.atan2(du, dv), 0, 0]), 'Ladder')];
+}
+
+/** A cut-out rectangle in a sheet's own 2D coordinates, or null if the sheet can't take it here. */
+export function sheetHole(p: PartInstance, view: PlaneView, a: P2, b: P2): number[] | null {
+  const corners: P2[] = [{ u: a.u, v: a.v }, { u: b.u, v: a.v }, { u: b.u, v: b.v }, { u: a.u, v: b.v }];
+  if (p.type === 'hullSides') {
+    if (view !== 'side') return null;
+    return corners.flatMap((q) => [round(q.u - p.position[2]), round(q.v - p.position[1])]);
+  }
+  if (!isSheet(p) || !facesView(p, view)) return null;
+  return corners.flatMap((q) => planeToSheetLocal(p, view, q).map(round));
+}
+
+/** Does a hole (sheet 2D coordinates) overlap the sheet's face at all? */
+export function holeHitsSheet(p: PartInstance, hole: number[]): boolean {
+  const xs = hole.filter((_, i) => i % 2 === 0), zs = hole.filter((_, i) => i % 2 === 1);
+  if (p.type === 'hullSides') {
+    return Math.min(...xs) < p.size[2] / 2 && Math.max(...xs) > -p.size[2] / 2 && Math.min(...zs) < p.size[1] / 2 && Math.max(...zs) > -p.size[1] / 2;
+  }
+  const o = deckOutline(p);
+  const ox = o.map((q) => q[0]), oz = o.map((q) => q[1]);
+  return Math.min(...xs) < Math.max(...ox) && Math.max(...xs) > Math.min(...ox) && Math.min(...zs) < Math.max(...oz) && Math.max(...zs) > Math.min(...oz);
+}
+
+/** A window frame fitted into a hole in a floor or framing sheet. */
+export function windowFor(p: PartInstance, hole: number[], opts: PenOptions): PartInstance {
+  const xs = hole.filter((_, i) => i % 2 === 0), zs = hole.filter((_, i) => i % 2 === 1);
+  const cx = (Math.min(...xs) + Math.max(...xs)) / 2, cz = (Math.min(...zs) + Math.max(...zs)) / 2;
+  const w = Math.max(...xs) - Math.min(...xs), h = Math.max(...zs) - Math.min(...zs);
+  if (p.type === 'hullSides') {
+    // Side walls stand at ±width/2 and face ±X; the window sits in the starboard wall (the mirror twin covers port).
+    const win = part('window', [p.size[0] / 2 + 0.01, p.position[1] + cz, p.position[2] + cx], [h, 0.06, w], [0, 0, Math.PI / 2], opts.windowFrame);
+    win.props.glazed = opts.cutoutStyle === 'window';
+    return named(win, 'Window');
+  }
+  const win = part('window', localToWorld(p, [cx, 0, cz]), [w, p.size[1] + 0.02, h], [...p.rotation] as Vec3, opts.windowFrame);
+  win.props.glazed = opts.cutoutStyle === 'window';
+  return named(win, 'Window');
 }
 
 /** How far a support/sheet reaches either side of its drawn centre line, within the drawing plane. */

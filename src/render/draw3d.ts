@@ -145,7 +145,14 @@ export class Draw3D {
       if (def.compartment || def.envelope || p.type === 'hullSides') continue;
       if (isSegmentLike(p)) for (const w of endpoints(p)) consider(new THREE.Vector3(...w));
       if (isSheet(p)) for (const w of deckCorners(p)) consider(new THREE.Vector3(...w));
-      if (def.structural || isSheet(p)) {
+      // Corners of cut-outs are connection points too.
+      for (const hole of p.holes ?? []) {
+        for (let i = 0; i + 1 < hole.length; i += 2) {
+          if (p.type === 'hullSides') for (const sx of [-1, 1]) consider(new THREE.Vector3(sx * p.size[0] / 2, p.position[1] + hole[i + 1], p.position[2] + hole[i]));
+          else consider(new THREE.Vector3(...localToWorld(p, [hole[i], 0, hole[i + 1]])));
+        }
+      }
+      if (def.structural || isSheet(p) || p.type === 'window') {
         const [hx, hy, hz] = p.size.map((s) => s / 2);
         if (!p.points) for (const sx of [-1, 1]) for (const sy of [-1, 1]) for (const sz of [-1, 1]) consider(new THREE.Vector3(...localToWorld(p, [sx * hx, sy * hy, sz * hz])));
       }

@@ -92,16 +92,33 @@ function pivot(x: number, y: number, z: number, ...children: THREE.Object3D[]) {
 }
 
 /** A flat slab cut to an outline given in local X/Z, `thickness` thick, centred at height y. */
-function outlineSlab(points: number[], thickness: number, y: number, mat: THREE.Material): THREE.Mesh {
+function outlineSlab(points: number[], thickness: number, y: number, mat: THREE.Material, holes: number[][] = []): THREE.Mesh {
   const shape = new THREE.Shape();
   for (let i = 0; i + 2 < points.length; i += 3) {
     if (i === 0) shape.moveTo(points[i], points[i + 2]);
     else shape.lineTo(points[i], points[i + 2]);
   }
+  for (const h of holes) shape.holes.push(holePath(h));
   const geo = new THREE.ExtrudeGeometry(shape, { depth: thickness, bevelEnabled: false });
   geo.rotateX(Math.PI / 2);
   geo.translate(0, y + thickness / 2, 0);
   return mesh(geo, mat);
+}
+
+function holePath(flat: number[]): THREE.Path {
+  const path = new THREE.Path();
+  for (let i = 0; i + 1 < flat.length; i += 2) {
+    if (i === 0) path.moveTo(flat[i], flat[i + 1]);
+    else path.lineTo(flat[i], flat[i + 1]);
+  }
+  return path;
+}
+
+/** A sheet's outline as a flat [x, 0, z, …] list: its drawn shape, or its rectangle. */
+function sheetOutline(p: PartInstance): number[] {
+  if (p.points && p.points.length >= 9) return p.points;
+  const hx = p.size[0] / 2, hz = p.size[2] / 2;
+  return [-hx, 0, -hz, hx, 0, -hz, hx, 0, hz, -hx, 0, hz];
 }
 
 // ── Builders ─────────────────────────────────────────────────────────────────
@@ -176,7 +193,7 @@ function build(p: PartInstance, M: Mats): Built {
   const state = Number(p.props.state ?? 0);
   switch (def.shape) {
     case 'box': {
-      if (p.type === 'deck' && p.points && p.points.length >= 9) return real(outlineSlab(p.points, H, 0, M.main));
+      if (p.type === 'deck' && ((p.points && p.points.length >= 9) || p.holes?.length)) return real(outlineSlab(sheetOutline(p), H, 0, M.main, p.holes));
       return unit(box(1, 1, 1, M.main));
     }
     case 'tube': {
@@ -268,8 +285,8 @@ function build(p: PartInstance, M: Mats): Built {
       // A thin sheet of planking or metal, with optional plating on either face.
       const g = new THREE.Group();
       M.main.userData.panel = true;
-      const shaped = p.points && p.points.length >= 9;
-      g.add(shaped ? outlineSlab(p.points!, H, 0, M.main) : box(W, H, D, M.main));
+      const shaped = (p.points && p.points.length >= 9) || !!p.holes?.length;
+      g.add(shaped ? outlineSlab(sheetOutline(p), H, 0, M.main, p.holes) : box(W, H, D, M.main));
       const t = Number(p.props.skinThickness ?? 0.02);
       const s = Number(p.props.outSign ?? 1) >= 0 ? 1 : -1;
       for (const [key, side] of [['skinOuter', s], ['skinInner', -s]] as const) {
@@ -279,7 +296,7 @@ function build(p: PartInstance, M: Mats): Built {
         const mat = std(sm.color, sm.metalness, sm.roughness, sm.transparent ? { transparent: true, opacity: 0.45 } : {});
         mat.userData.skin = true;
         const y = side * (H / 2 + t / 2);
-        g.add(shaped ? outlineSlab(p.points!, t, y, mat) : box(W, t, D, mat, 0, y, 0));
+        g.add(shaped ? outlineSlab(sheetOutline(p), t, y, mat, p.holes) : box(W, t, D, mat, 0, y, 0));
       }
       return real(g);
     }
@@ -290,6 +307,7 @@ function build(p: PartInstance, M: Mats): Built {
         if (i === 0) shape.moveTo(pts[i + 2], pts[i + 1]);
         else shape.lineTo(pts[i + 2], pts[i + 1]);
       }
+      for (const h of p.holes ?? []) shape.holes.push(holePath(h));
       const t = Number(p.props.thickness ?? 0.02);
       const g = new THREE.Group();
       if (pts.length >= 9) {
@@ -301,6 +319,15 @@ function build(p: PartInstance, M: Mats): Built {
         }
       }
       M.main.userData.skin = true;
+      return real(g);
+    }
+    case 'opening': {
+      // A window frame lying in local X/Z with an optional glass pane.
+      const bar = Math.min(0.08, Math.min(W, D) * 0.1);
+      const g = new THREE.Group();
+      g.add(box(W, H, bar, M.main, 0, 0, -D / 2 + bar / 2), box(W, H, bar, M.main, 0, 0, D / 2 - bar / 2),
+        box(bar, H, D, M.main, -W / 2 + bar / 2, 0, 0), box(bar, H, D, M.main, W / 2 - bar / 2, 0, 0));
+      if (p.props.glazed !== false) g.add(box(W - bar, 0.01, D - bar, M.glass));
       return real(g);
     }
     case 'boatHull': {

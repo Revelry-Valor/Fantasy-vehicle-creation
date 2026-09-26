@@ -1,6 +1,6 @@
 import { getDef, type Category } from './catalog';
 import { G, WATER_DENSITY, airDensityAt, getFluid } from './fluids';
-import { outlineAreaXZ, partArea, partVolume, shapeVolume, unionAABB, worldAABB, type AABB } from './geometry';
+import { sheetArea, partArea, partVolume, shapeVolume, unionAABB, worldAABB, type AABB } from './geometry';
 import { getMaterial } from './materials';
 import { buildContactGraph, buildFluidNetworks, solvePower, type ContactGraph } from './networks';
 import type { Design, PartInstance, Vec3 } from './types';
@@ -90,7 +90,7 @@ export function contentsMass(p: PartInstance, fill: number): number {
 function frameMass(p: PartInstance): number {
   const [span, t, len] = p.size;
   // A reshaped sheet weighs what its outline covers.
-  const area = p.points && p.points.length >= 9 ? outlineAreaXZ(p.points) : span * len;
+  const area = p.points || p.holes ? sheetArea(p) : span * len;
   let m = area * t * getMaterial(p.material).density;
   const skinT = Number(p.props.skinThickness ?? 0.03);
   for (const k of ['skinOuter', 'skinInner']) {

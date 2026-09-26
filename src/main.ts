@@ -191,9 +191,10 @@ function renderToolbar() {
     btn('↶', () => store.undo(), { title: 'Undo (Ctrl+Z)', disabled: !store.canUndo() || !editing }),
     btn('↷', () => store.redo(), { title: 'Redo (Ctrl+Y)', disabled: !store.canRedo() || !editing }),
   );
-  const snapSelect = h('label', { class: 'inline', title: 'Grid snap' }, 'Snap',
-    h('select', { onchange: (e) => { const s = parseFloat((e.target as HTMLSelectElement).value); viewport.setSnap(s); blueprint.snapStep = s; blueprint.invalidate(); } },
-      [0, 0.05, 0.1, 0.25, 0.5, 1].map((s) => h('option', { value: s, selected: viewport.snap === s }, s ? `${s} m` : 'off'))));
+  const snapSelect = h('span', { class: 'inline' },
+    btn(viewport.snap ? '▦ Grid snap' : '▢ Free', toggleGrid, { active: !!viewport.snap, title: 'Snap to the grid, or place freely (G). Hold Alt for a one-off free point.' }),
+    h('select', { title: 'Grid size', onchange: (e) => setGrid(parseFloat((e.target as HTMLSelectElement).value)) },
+      [0.05, 0.1, 0.25, 0.5, 1].map((s) => h('option', { value: s, selected: (viewport.snap || lastGrid) === s }, `${s} m`))));
   const simBtn = h('div', { class: 'group right' },
     sim ? btn('■ Stop sim', stopSim, { cls: 'danger' }) : btn('▶ Simulate', () => { startSim(); setTab('simulate'); }, { cls: 'primary' }),
   );
@@ -249,6 +250,20 @@ function renderToolbar() {
     simBtn,
   );
   penPanel.render();
+}
+
+let lastGrid = 0.25;
+function setGrid(s: number) {
+  if (s) lastGrid = s;
+  viewport.setSnap(s);
+  blueprint.snapStep = s;
+  blueprint.invalidate();
+  renderToolbar();
+}
+
+function toggleGrid() {
+  setGrid(viewport.snap ? 0 : lastGrid);
+  status(viewport.snap ? `Snapping to a ${viewport.snap} m grid.` : 'Free placement: no grid snapping (parts still snap to each other).');
 }
 
 function setMode(m: Mode) {
@@ -420,6 +435,7 @@ window.addEventListener('keydown', (e) => {
   if (ctrl) return;
   if ((k === 'delete' || k === 'backspace') && store.selection.length && !sim) { store.removeParts(store.selection); return; }
   if (k === 'm') { store.mirror = !store.mirror; renderToolbar(); return; }
+  if (k === 'g') { toggleGrid(); return; }
   if (mode === '2d') {
     if (blueprint.handleKey(e)) { renderToolbar(); penPanel.render(); return; }
     if (k === 'escape') { store.select([]); return; }

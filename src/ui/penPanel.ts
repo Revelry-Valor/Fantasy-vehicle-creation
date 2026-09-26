@@ -9,6 +9,9 @@ const PENS: { id: PenKind; name: string; key: string; hint: string }[] = [
   { id: 'room', name: 'Floor + ceiling', key: '2', hint: 'A floor, a ceiling above it and the room (air volume) between.' },
   { id: 'support', name: 'Supports', key: '3', hint: 'Beams and pillars. Snaps to horizontal and vertical; hold Shift for any angle.' },
   { id: 'frame', name: 'Framing', key: '4', hint: 'Draw the outline of the craft point by point in thin planking or metal sheet. Add armor to either face if you like. Close the loop to seal the hull.' },
+  { id: 'ramp', name: 'Ramp / stairs', key: '5', hint: 'A sloped floor or a flight of stairs joining two levels. Side view: draw from one floor edge to the other. Top plan: draw the run on the active deck; it climbs the set rise.' },
+  { id: 'ladder', name: 'Ladder', key: '6', hint: 'Side view: draw it from floor to floor (snaps upright; Shift for a lean). Top plan: click where it stands.' },
+  { id: 'cutout', name: 'Cut-out', key: '7', hint: 'Click two corners of a rectangle over framing, a floor or a hull wall to cut an opening (a hatch, a window, a doorway). Leave it open or fit a glazed window. Its corners and edges become snap points.' },
 ];
 
 /** Left-panel controls for the 2D blueprint: view, tools, pens, options and layers. */
@@ -67,6 +70,26 @@ export class PenPanel {
                 segBtn('Centre', o.supportPlacement === 'centre', () => set('supportPlacement', 'centre')))
               : h('p', { class: 'hint' }, 'Click, click: a horizontal beam under the active floor. Double-click: a standing pillar. Start on another support to build at its height.'),
             in3d ? null : side ? num('Width', 'width', 'm', 0.25) : num('Pillar height', 'ceilingHeight', 'm', 0.1),
+          ];
+          break;
+        case 'ramp':
+          options = [
+            h('div', { class: 'seg' }, h('span', {}, 'Style'),
+              segBtn('Ramp', o.rampStyle === 'ramp', () => set('rampStyle', 'ramp')),
+              segBtn('Stairs', o.rampStyle === 'stairs', () => set('rampStyle', 'stairs'))),
+            select('Surface', 'floorType', FLOOR_TYPES.map((f) => ({ value: f.id, label: f.name }))),
+            side ? num('Width', 'width', 'm', 0.25) : num('Rise', 'rampRise', 'm', 0.1),
+          ];
+          break;
+        case 'ladder':
+          options = [side ? h('p', { class: 'hint' }, 'Sized for the crew height in Settings.') : num('Climbs', 'rampRise', 'm', 0.1)];
+          break;
+        case 'cutout':
+          options = [
+            h('div', { class: 'seg' }, h('span', {}, 'Fill'),
+              segBtn('Open', o.cutoutStyle === 'open', () => set('cutoutStyle', 'open')),
+              segBtn('Window', o.cutoutStyle === 'window', () => set('cutoutStyle', 'window'))),
+            o.cutoutStyle === 'window' ? select('Window frame', 'windowFrame', mats) : null,
           ];
           break;
         case 'frame':
