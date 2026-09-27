@@ -127,6 +127,17 @@ directly on the model:
 - **Snapping:** points snap to the ends and corners of parts (yellow), to
   part surfaces (green), or to a working plane at the height of the last
   point (blue). Hold Shift to draw straight up and down.
+- **Attaching to supports:** besides ends and corners, you can attach
+  anywhere along a support's four long edges, the middle line of each side
+  face, or its centre line (the line lights up green, and stops where grid
+  lines cross it), plus the midpoints of all of these. Floors and sheets
+  offer their edges the same way. Where a straight line from your last
+  point crosses one of these lines, it snaps to exactly that spot.
+- **Angled but straight:** hold Shift to draw in the upright plane through
+  the last point that faces you (fore–aft or across). Free points that
+  nearly line up with the last point in any direction are lined up
+  exactly. An angled brace then shows e.g. "32° from level · ✓ no lean
+  across", with the line drawn in light blue.
 - **Straight lines:** once you've placed a point, the pointer rides the
   exact vertical line, or the level line fore–aft or across, through that
   point whenever it's within a few pixels. The preview line turns that
