@@ -211,3 +211,5 @@ button.mini { padding: 2px 6px; font-size: 11px; font-variant-numeric: tabular-n
 .tool-grid button.tool { white-space: normal; line-height: 1.2; min-height: 30px; gap: 4px; }
 .seg { flex-wrap: wrap; }
 .seg button { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.draw-label { margin-top: -30px; font: 600 11px system-ui, sans-serif; color: #ffe39a; background: rgba(12, 20, 30, 0.82); padding: 2px 6px; border-radius: 4px; white-space: nowrap; pointer-events: none; }
+.draw-label.straight { color: #8dffb0; }

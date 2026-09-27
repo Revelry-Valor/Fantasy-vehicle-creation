@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { CSS2DObject } from 'three/examples/jsm/renderers/CSS2DRenderer.js';
 import { getDef } from '../core/catalog';
 import { localToWorld } from '../core/geometry';
 import { deckCorners, endpoints, framePolygon3D, isSegmentLike, isSheet, support3D, type PenOptions } from '../core/pens';
@@ -9,7 +10,9 @@ export type Pen3D = 'support' | 'frame';
 
 interface Hover {
   p: THREE.Vector3;
-  kind: 'point' | 'surface' | 'plane';
+  kind: 'point' | 'surface' | 'plane' | 'axis';
+  /** For 'axis' snaps: which straight line through the last point (0 = X, 1 = Y/vertical, 2 = Z). */
+  axis?: number;
   /** The part being snapped to, outlined so you can see it. */
   target?: string;
 }
@@ -28,7 +31,13 @@ export interface Draw3DHost {
 }
 
 const SNAP_PX = 12;
-const AXIS_LOCK = Math.cos(THREE.MathUtils.degToRad(8));
+/** On surfaces and the working plane, lines within this angle of straight are made straight. */
+const AXIS_LOCK = Math.cos(THREE.MathUtils.degToRad(2));
+/** How close (px) the pointer must be to a straight line through the last point to ride on it. */
+const AXIS_PX = 10;
+const AXES = [new THREE.Vector3(1, 0, 0), new THREE.Vector3(0, 1, 0), new THREE.Vector3(0, 0, 1)];
+const AXIS_COLORS = [0xff5a5a, 0x5aff7a, 0x5aa8ff];
+const AXIS_NAMES = ['level, across the ship', 'vertical', 'level, fore and aft'];
 
 /**
  * Drawing supports and framing directly in 3D. Points snap to the ends and
@@ -44,6 +53,7 @@ export class Draw3D {
   private marker: THREE.Mesh;
   private markerMat: THREE.MeshBasicMaterial;
   private targetBox: THREE.LineSegments;
+  private label: CSS2DObject;
 
   constructor(private host: Draw3DHost, private store: Store, private opts: () => PenOptions) {
     this.line = new THREE.Line(new THREE.BufferGeometry(), new THREE.LineBasicMaterial({ color: 0xffd35a, depthTest: false }));
@@ -59,7 +69,9 @@ export class Draw3D {
     this.targetBox = new THREE.LineSegments(new THREE.EdgesGeometry(new THREE.BoxGeometry(1, 1, 1)), new THREE.LineBasicMaterial({ color: 0x7dffb0, depthTest: false }));
     this.targetBox.renderOrder = 19;
     this.targetBox.visible = false;
-    this.preview.add(this.line, this.marker, centre, this.targetBox);
+    this.label = new CSS2DObject(document.createElement('div'));
+    this.label.visible = false;
+    this.preview.add(this.line, this.marker, centre, this.targetBox, this.label);
     this.preview.visible = false;
     host.vehicle.add(this.preview);
   }
@@ -180,16 +192,36 @@ export class Draw3D {
       }
     }
     if (best) return { p: (best as THREE.Vector3).clone(), kind: 'point', target: owner };
+    // 2. Straight lines through the last point (vertical, and level along X and Z).
+    //    Ride on one while the pointer is near it; move further away to leave it. Alt: off.
+    const lastPt = this.points[this.points.length - 1];
+    if (lastPt && !e.altKey) {
+      const ray = this.host.rayFrom(e);
+      ray.origin.sub(offset);
+      let pick: Hover | null = null, pickD = AXIS_PX;
+      AXES.forEach((axis, i) => {
+        const t = closestOnLineToRay(lastPt, axis, ray);
+        if (t === null || Math.abs(t) < 1e-3) return;
+        const s = this.host.snap;
+        const tt = s ? Math.round(t / s) * s || t : t;
+        const q = lastPt.clone().addScaledVector(axis, tt);
+        const sc = toScreen(q), raw = toScreen(lastPt.clone().addScaledVector(axis, t));
+        if (!sc || !raw) return;
+        const d = Math.hypot(raw.x - mx, raw.y - my);
+        if (d < pickD) { pickD = d; pick = { p: q, kind: 'axis', axis: i }; }
+      });
+      if (pick) return pick;
+    }
     // Pull onto the centre line when the pointer is close to it on screen.
     const toCentre = (p: THREE.Vector3) => {
       const a = toScreen(p), b = toScreen(new THREE.Vector3(0, p.y, p.z));
       if (a && b && Math.hypot(a.x - b.x, a.y - b.y) < SNAP_PX) p.x = 0;
       return p;
     };
-    // 2. A part's surface.
+    // 3. A part's surface.
     const hit = this.host.pickPoint(e);
-    if (hit) return { p: toCentre(this.lock(hit)), kind: 'surface', target: this.host.pickId(e) ?? undefined };
-    // 3. The working plane.
+    if (hit) return { p: toCentre(e.altKey ? hit : this.lock(hit)), kind: 'surface', target: this.host.pickId(e) ?? undefined };
+    // 4. The working plane.
     const last = this.points[this.points.length - 1];
     const ray = this.host.rayFrom(e);
     ray.origin.sub(offset);
@@ -209,7 +241,7 @@ export class Draw3D {
       if (Math.abs(plane.normal.y) > 0.9) { p.x = Math.round(p.x / s) * s; p.z = Math.round(p.z / s) * s; }
       else { p.y = Math.round(p.y / s) * s; }
     }
-    return { p: toCentre(this.lock(p)), kind: 'plane' };
+    return { p: toCentre(e.altKey ? p : this.lock(p)), kind: 'plane' };
   }
 
   /** Lock onto the X, Y or Z axis through the last point when nearly aligned. */
@@ -234,6 +266,15 @@ export class Draw3D {
     this.line.geometry.dispose();
     this.line.geometry = new THREE.BufferGeometry().setFromPoints(pts);
     this.marker.visible = !!this.hover;
+    const last = this.points[this.points.length - 1];
+    const straight = last && this.hover ? straightness(last, this.hover.p) : null;
+    (this.line.material as THREE.LineBasicMaterial).color.setHex(straight?.exact !== undefined ? AXIS_COLORS[straight.exact] : 0xffd35a);
+    this.label.visible = !!straight;
+    if (straight && this.hover) {
+      this.label.position.copy(this.hover.p);
+      this.label.element.textContent = straight.text;
+      this.label.element.className = `draw-label${straight.exact !== undefined ? ' straight' : ''}`;
+    }
     const t = this.hover?.target ? this.store.get(this.hover.target) : undefined;
     this.targetBox.visible = !!t;
     if (t) {
@@ -244,15 +285,42 @@ export class Draw3D {
     }
     if (this.hover) {
       this.marker.position.copy(this.hover.p);
-      this.markerMat.color.setHex(this.hover.kind === 'point' ? 0xffd35a : this.hover.kind === 'surface' ? 0x7dffb0 : 0x6fb6ff);
+      this.markerMat.color.setHex(this.hover.kind === 'axis' ? AXIS_COLORS[this.hover.axis ?? 1] : this.hover.kind === 'point' ? 0xffd35a : this.hover.kind === 'surface' ? 0x7dffb0 : 0x6fb6ff);
     }
   }
 
   private status() {
     const last = this.points[this.points.length - 1];
     const len = last && this.hover ? ` · ${last.distanceTo(this.hover.p).toFixed(2)} m` : '';
-    const where = this.hover ? ` · ${this.hover.kind === 'point' ? 'on a connection point' : this.hover.kind === 'surface' ? 'on a surface' : 'on the working plane (Shift = vertical)'}` : '';
+    const where = this.hover ? ` · ${this.hover.kind === 'axis' ? `straight: ${AXIS_NAMES[this.hover.axis ?? 1]} (Alt to break away)` : this.hover.kind === 'point' ? 'on a connection point' : this.hover.kind === 'surface' ? 'on a surface' : 'on the working plane (Shift = vertical)'}` : '';
     if (this.pen === 'support') this.host.onStatus(`Supports: ${last ? 'click to place the other end' : 'click the first end'}${len}${where} · Esc to stop`);
     else if (this.pen === 'frame') this.host.onStatus(`Framing: ${this.points.length < 3 ? `click corner ${this.points.length + 1}` : 'click the first corner or press Enter to finish'}${len}${where} · Esc cancels`);
   }
+}
+
+/** Parameter t along the line o + a·t closest to a ray (null if they're parallel). */
+function closestOnLineToRay(o: THREE.Vector3, a: THREE.Vector3, ray: THREE.Ray): number | null {
+  const d = ray.direction;
+  const w = o.clone().sub(ray.origin);
+  const b = a.dot(d);
+  const denom = 1 - b * b;
+  if (denom < 1e-6) return null;
+  return (b * w.dot(d) - w.dot(a)) / denom;
+}
+
+/** How straight the line from a to b is: exact axis, or how far off vertical/level it is. */
+function straightness(a: THREE.Vector3, b: THREE.Vector3): { exact?: number; text: string } | null {
+  const d = b.clone().sub(a);
+  const len = d.length();
+  if (len < 1e-4) return null;
+  const lenText = `${len.toFixed(2)} m`;
+  const eps = 1e-4;
+  const flat = [Math.abs(d.x) < eps, Math.abs(d.y) < eps, Math.abs(d.z) < eps];
+  if (flat[0] && flat[2]) return { exact: 1, text: `✓ Vertical · ${lenText}` };
+  if (flat[1] && flat[2]) return { exact: 0, text: `✓ Level, across · ${lenText}` };
+  if (flat[0] && flat[1]) return { exact: 2, text: `✓ Level, fore–aft · ${lenText}` };
+  const fromVertical = THREE.MathUtils.radToDeg(Math.acos(Math.min(1, Math.abs(d.y) / len)));
+  if (fromVertical < 45) return { text: `${fromVertical.toFixed(1)}° off vertical · ${lenText}` };
+  if (flat[1]) return { text: `✓ Level · ${lenText}` };
+  return { text: `${(90 - fromVertical).toFixed(1)}° off level · ${lenText}` };
 }

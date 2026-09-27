@@ -126,8 +126,13 @@ In 3D mode the left panel offers **Supports** and **Framing** pens that work
 directly on the model:
 - **Snapping:** points snap to the ends and corners of parts (yellow), to
   part surfaces (green), or to a working plane at the height of the last
-  point (blue). Hold Shift to draw straight up and down. Lines lock to the
-  X, Y and Z axes when you're close.
+  point (blue). Hold Shift to draw straight up and down.
+- **Straight lines:** once you've placed a point, the pointer rides the
+  exact vertical line, or the level line fore–aft or across, through that
+  point whenever it's within a few pixels. The preview line turns that
+  axis's colour and a label reads ✓ Vertical or ✓ Level. Otherwise the
+  label shows how many degrees off vertical or level you are. Move further
+  away, or hold Alt, to place it slightly off on purpose.
 - **Supports:** each click runs a support from the last point. Esc or
   right-click stops.
 - **Framing:** click three or more corners, then click the first corner
