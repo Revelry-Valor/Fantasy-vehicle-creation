@@ -209,3 +209,5 @@ ul.layers li.active { border-color: #b8902a; background: rgba(255, 211, 90, 0.08
 button.mini { padding: 2px 6px; font-size: 11px; font-variant-numeric: tabular-nums; }
 .mode-switch button { font-weight: 600; }
 .tool-grid button.tool { white-space: normal; line-height: 1.2; min-height: 30px; gap: 4px; }
+.seg { flex-wrap: wrap; }
+.seg button { min-width: 0; overflow: hidden; text-overflow: ellipsis; }

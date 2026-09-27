@@ -79,9 +79,12 @@ to lights up (yellow for a point, green for a face or line). Along a face,
 the snap stops where a background grid line crosses it. The red **centre
 line** (the mirror line, in the top plan and in 3D) is a snap target too.
 With Mirror on, a beam drawn straight out from the centre line becomes one
-piece spanning both sides. A support started or ended on the end of
-another support and turning a corner makes a clean L-joint: it sits on
-the end face, flush with the outer edge.
+piece spanning both sides. The end of a support offers two targets. The
+**circle** (on the end's centre) lines the new support up exactly on that
+point. The **square** (just past the end) makes a flush corner joint: the
+new support sits on the end face, level with its outer edge, or butts
+straight onto it if it carries on in line. While you draw, a dashed ghost
+shows exactly where the part will land before you click.
 
 Pens and drags snap in this order:
 - the ends of a part's centre line and every corner of its outline (yellow

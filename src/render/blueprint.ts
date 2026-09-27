@@ -42,11 +42,24 @@ interface Snap {
   axis?: P2;
   /** Lines to highlight so you can see what you're snapping to. */
   lines?: [P2, P2][];
+  /** Snapped to a support end's flush-joint square rather than its centre point. */
+  joint?: boolean;
 }
 
 interface EdgeHit { p: P2; id: string; normal?: P2; out: number; seg: [P2, P2] }
 
-interface Connection { p: P2; id?: string; out?: number; normals?: P2[]; axis?: P2; lines?: [P2, P2][] }
+interface Connection {
+  p: P2;
+  id?: string;
+  out?: number;
+  normals?: P2[];
+  axis?: P2;
+  lines?: [P2, P2][];
+  /** A "flush joint" target: build against this support's end face instead of on its centre point. */
+  joint?: boolean;
+  /** Where the target is drawn and picked, when that differs from `p` (kept apart so both are easy to hit). */
+  visual?: P2;
+}
 
 const SNAP_PX = 11;
 const EDGE_PX = 8;
@@ -262,10 +275,22 @@ export class Blueprint {
         const w = endpoints(s.part);
         const [e0, e1] = s.ends;
         const len = Math.hypot(e1.u - e0.u, e1.v - e0.v);
+        const jointable = this.tool === 'pen' && this.pen === 'support' && !isSheet(s.part) && !!getDef(s.part.type).structural;
+        const half = halfDepth(this.view, 'support', this.opts);
         s.ends.forEach((p, i) => {
           const other = s.ends![1 - i];
           const axis = len > 1e-3 ? { u: (p.u - other.u) / len, v: (p.v - other.v) / len } : undefined;
-          pts.push({ p, id: s.part.id, out: outOfPlane(this.view, w[i]), axis, lines: [[e0, e1]] });
+          // Circle: the exact centre of this end. New work lines up on it.
+          pts.push({ p, id: s.part.id, out: outOfPlane(this.view, w[i]), lines: [[e0, e1]] });
+          // Square: a flush joint on this end face (drawn a little further out so it's easy to pick).
+          if (jointable && axis) {
+            const gap = Math.max(half, 16 / this.cam.scale);
+            pts.push({
+              p: { u: p.u + axis.u * half, v: p.v + axis.v * half },
+              visual: { u: p.u + axis.u * gap, v: p.v + axis.v * gap },
+              id: s.part.id, out: outOfPlane(this.view, w[i]), axis, joint: true, lines: [[e0, e1]],
+            });
+          }
         });
       }
       const out = this.anchorOut(s.part);
@@ -333,11 +358,12 @@ export class Blueprint {
     const cps = this.connectionPoints(exclude);
     let best: Connection | null = null, bestD = SNAP_PX / k;
     for (const c of cps) {
-      const d = Math.hypot(c.p.u - raw.u, c.p.v - raw.v);
+      const at = c.visual ?? c.p;
+      const d = Math.hypot(at.u - raw.u, at.v - raw.v);
       const tie = best && Math.abs(d - bestD) < 1e-6 && (c.out ?? -Infinity) > (best.out ?? -Infinity);
       if (d < bestD - 1e-6 || tie) { bestD = d; best = c; }
     }
-    if (best) return { p: { ...best.p }, kind: 'point', guides, target: best.id, out: best.out, normals: best.normals, axis: best.axis, lines: best.lines };
+    if (best) return { p: { ...best.p }, kind: 'point', guides, target: best.id, out: best.out, normals: best.normals, axis: best.axis, lines: best.lines, joint: best.joint };
     if (constrained) {
       // Stretch a constrained line to meet a nearby surface along its own axis.
       const e = this.nearestEdge(p, exclude, opts.from);
@@ -824,21 +850,27 @@ export class Blueprint {
     const d = { u: (b.u - a.u) / len, v: (b.v - a.v) / len };
     const half = halfDepth(this.view, 'support', this.opts);
     let na = a, nb = b;
-    let shifted = false;
+    let changed = false;
+    // Only the square "flush joint" targets change anything; circles line up exactly where you click.
     for (const [snap, atStart] of [[this.chainStart, true], [end, false]] as const) {
       const ax = snap?.axis;
       const t = snap?.target ? this.store.get(snap.target) : undefined;
-      if (!ax || !t || Math.abs(ax.u * d.u + ax.v * d.v) > 0.3) continue;
-      const tHalf = (this.view === 'side' ? t.size[1] : t.size[0]) / 2;
-      if (!shifted) {
-        na = { u: na.u + ax.u * half, v: na.v + ax.v * half };
-        nb = { u: nb.u + ax.u * half, v: nb.v + ax.v * half };
-        shifted = true;
+      if (!snap?.joint || !ax || !t) continue;
+      changed = true;
+      const along = ax.u * d.u + ax.v * d.v;
+      if (Math.abs(along) > 0.7) {
+        // Carrying straight on: butt up against the end face.
+        const back = { u: -ax.u * half, v: -ax.v * half };
+        if (atStart) na = { u: na.u + back.u, v: na.v + back.v };
+        else nb = { u: nb.u + back.u, v: nb.v + back.v };
+        continue;
       }
+      // Turning a corner: sit on the end face and reach back to its outer edge.
+      const tHalf = (this.view === 'side' ? t.size[1] : t.size[0]) / 2;
       if (atStart) na = { u: na.u - d.u * tHalf, v: na.v - d.v * tHalf };
       else nb = { u: nb.u + d.u * tHalf, v: nb.v + d.v * tHalf };
     }
-    return shifted ? { a: na, b: nb } : { a, b };
+    return changed ? { a: na, b: nb } : { a, b };
   }
 
   private faceOffset(a: P2, b: P2, end: Snap): { a: P2; b: P2 } {
@@ -901,11 +933,6 @@ export class Blueprint {
       return;
     }
     const start = this.chain[this.chain.length - 1];
-    const anchor = this.anchorFrom(this.chainStart);
-    // No decks yet: top-plan beams rest on the ground rather than under a floor.
-    if (this.view === 'top' && this.pen === 'support' && anchor.out === undefined && !this.activeLayer()) {
-      anchor.out = halfDepth('side', 'support', this.opts);
-    }
     if (Math.hypot(p.u - start.u, p.v - start.v) < 0.02) {
       // Clicking the same spot twice in the top plan stands a pillar there.
       if (this.pen === 'support' && this.view === 'top') {
@@ -917,24 +944,13 @@ export class Blueprint {
       }
       return;
     }
-    let { a, b } = this.pen === 'support' ? this.supportJoint(start, p, s) : { a: start, b: p };
-    if (a === start && b === p) ({ a, b } = this.faceOffset(start, p, s));
-    // A beam drawn straight out from the red centre line becomes one piece
-    // spanning both sides, instead of two halves meeting in the middle.
-    if (this.store.mirror && this.view === 'top' && (this.pen === 'support' || this.pen === 'frame')) {
-      if (Math.abs(a.v) < 1e-6 && Math.abs(b.u - a.u) < 1e-6 && Math.abs(b.v) > 0.02) a = { u: b.u, v: -b.v };
-      else if (Math.abs(b.v) < 1e-6 && Math.abs(b.u - a.u) < 1e-6 && Math.abs(a.v) > 0.02) b = { u: a.u, v: -a.v };
-    }
-    switch (this.pen) {
-      case 'floor': add(drawFloor(this.view, a, b, this.opts, layerY, anchor)); this.chain = []; break;
-      case 'room': add(drawRoom(this.view, a, b, this.opts, layerY, anchor)); this.chain = []; break;
-      case 'support': add(drawSupport(this.view, a, b, this.opts, layerY, floorT, anchor)); this.chain = []; break;
-      case 'ramp': add(drawRamp(this.view, a, b, this.opts, layerY, anchor)); this.chain = []; break;
-      case 'ladder': add(drawLadder(this.view, start, p, this.opts, layerY, this.store.design.settings.crewHeight)); this.chain = []; break;
-      case 'cutout': this.cutOut(start, p); this.chain = []; break;
-      case 'frame': {
-        const closes = this.chain.length >= 3 && Math.hypot(p.u - this.chain[0].u, p.v - this.chain[0].v) < 1e-6;
-        const parts = drawFraming(this.view, [a, b], this.opts, layerY, anchor);
+    if (this.pen === 'cutout') {
+      this.cutOut(start, p);
+      this.chain = [];
+    } else if (this.pen === 'frame') {
+      const closes = this.chain.length >= 3 && Math.hypot(p.u - this.chain[0].u, p.v - this.chain[0].v) < 1e-6;
+      {
+        const parts = this.buildStroke(start, s);
         add(parts);
         this.chainParts.push(...parts.map((q) => q.id));
         this.chain.push(p);
@@ -944,12 +960,48 @@ export class Blueprint {
           this.finishChain(true);
           return;
         }
-        break;
       }
+    } else {
+      add(this.buildStroke(start, s));
+      this.chain = [];
     }
     if (!this.chain.length) this.chainStart = null;
     this.status();
     this.invalidate();
+  }
+
+  /**
+   * The parts a stroke from `start` to the snap `s` would make. Nothing is
+   * added: the click adds them, and the preview draws them first so you see
+   * exactly where they'll land.
+   */
+  private buildStroke(start: P2, s: Snap): PartInstance[] {
+    const p = s.p;
+    if (Math.hypot(p.u - start.u, p.v - start.v) < 0.02) return [];
+    const layerY = this.layerY();
+    const floorT = floorTypeOf(this.opts).thickness;
+    const anchor = this.anchorFrom(this.chainStart);
+    // No decks yet: top-plan beams rest on the ground rather than under a floor.
+    if (this.view === 'top' && this.pen === 'support' && anchor.out === undefined && !this.activeLayer()) {
+      anchor.out = halfDepth('side', 'support', this.opts);
+    }
+    let { a, b } = this.pen === 'support' ? this.supportJoint(start, p, s) : { a: start, b: p };
+    if (a === start && b === p) ({ a, b } = this.faceOffset(start, p, s));
+    // A beam drawn straight out from the red centre line becomes one piece
+    // spanning both sides, instead of two halves meeting in the middle.
+    if (this.store.mirror && this.view === 'top' && (this.pen === 'support' || this.pen === 'frame')) {
+      if (Math.abs(a.v) < 1e-6 && Math.abs(b.u - a.u) < 1e-6 && Math.abs(b.v) > 0.02) a = { u: b.u, v: -b.v };
+      else if (Math.abs(b.v) < 1e-6 && Math.abs(b.u - a.u) < 1e-6 && Math.abs(a.v) > 0.02) b = { u: a.u, v: -a.v };
+    }
+    switch (this.pen) {
+      case 'floor': return drawFloor(this.view, a, b, this.opts, layerY, anchor);
+      case 'room': return drawRoom(this.view, a, b, this.opts, layerY, anchor);
+      case 'support': return drawSupport(this.view, a, b, this.opts, layerY, floorT, anchor);
+      case 'ramp': return drawRamp(this.view, a, b, this.opts, layerY, anchor);
+      case 'ladder': return drawLadder(this.view, start, p, this.opts, layerY, this.store.design.settings.crewHeight);
+      case 'frame': return drawFraming(this.view, [a, b], this.opts, layerY, anchor);
+      default: return [];
+    }
   }
 
   /**
@@ -1078,7 +1130,8 @@ export class Blueprint {
     else if (this.pen === 'ramp') hint = started ? 'Click the top (or bottom) end · Shift = 15° steps' : this.view === 'top' ? `Click where it starts; it climbs ${this.opts.rampRise} m` : 'Click one floor edge';
     else hint = started ? 'Click to finish' + (this.pen === 'support' ? ' · Shift = any angle' : '') : 'Click to start';
     const len = started && this.hover ? ` · ${Math.hypot(this.hover.p.u - this.chain[this.chain.length - 1].u, this.hover.p.v - this.chain[this.chain.length - 1].v).toFixed(2)} m` : '';
-    this.onStatus(`${names[this.pen]}: ${hint}${len}`);
+    const target = this.hover?.joint ? ' · ■ flush corner joint' : this.hover?.kind === 'point' && this.pen === 'support' ? ' · ● lined up on this point' : '';
+    this.onStatus(`${names[this.pen]}: ${hint}${len}${target}`);
   }
 
   // ── Rendering ─────────────────────────────────────────────────────────────
@@ -1323,11 +1376,30 @@ export class Blueprint {
     }
     if (this.tool !== 'pen' || !h) return;
     const p = this.toScreen(h.p);
-    // Snap marker
+    if (this.pen === 'support') this.drawJointTargets(h);
+    // Ghost of exactly what the click will build.
+    if (this.chain.length && !this.isPolyStroke() && this.pen !== 'cutout') {
+      for (const part of this.buildStroke(this.chain[this.chain.length - 1], h)) {
+        const poly = this.project(part).map((q) => this.toScreen(q));
+        if (poly.length < 2) continue;
+        ctx.beginPath();
+        poly.forEach((q, i) => (i ? ctx.lineTo(q.x, q.y) : ctx.moveTo(q.x, q.y)));
+        ctx.closePath();
+        ctx.fillStyle = 'rgba(255,211,90,0.22)';
+        ctx.fill();
+        ctx.setLineDash([4, 3]);
+        ctx.strokeStyle = 'rgba(255,211,90,0.95)';
+        ctx.lineWidth = 1.5;
+        ctx.stroke();
+        ctx.setLineDash([]);
+      }
+    }
+    // Snap marker: a square for a flush joint, a circle for a point you line up on.
     ctx.strokeStyle = h.kind === 'point' ? '#ffd35a' : h.kind === 'edge' ? '#7dffb0' : '#9fd0ff';
     ctx.lineWidth = 2;
     ctx.beginPath();
-    if (h.kind === 'point') ctx.arc(p.x, p.y, 7, 0, Math.PI * 2);
+    if (h.joint) { const q = this.toScreen(this.jointVisual(h)); ctx.rect(q.x - 6, q.y - 6, 12, 12); }
+    else if (h.kind === 'point') ctx.arc(p.x, p.y, 7, 0, Math.PI * 2);
     else if (h.kind === 'edge') { ctx.moveTo(p.x - 7, p.y); ctx.lineTo(p.x, p.y - 7); ctx.lineTo(p.x + 7, p.y); ctx.lineTo(p.x, p.y + 7); ctx.closePath(); }
     else { ctx.moveTo(p.x - 6, p.y); ctx.lineTo(p.x + 6, p.y); ctx.moveTo(p.x, p.y - 6); ctx.lineTo(p.x, p.y + 6); }
     ctx.stroke();
@@ -1381,6 +1453,34 @@ export class Blueprint {
     ctx.fillRect(p.x + 12, p.y + 10, tw + 10, 20);
     ctx.fillStyle = '#ffd35a';
     ctx.fillText(label, p.x + 17, p.y + 24);
+  }
+
+  /** Where a flush-joint square is drawn for a snap (a little out from the end so it can be picked). */
+  private jointVisual(h: Snap): P2 {
+    if (!h.axis) return h.p;
+    const half = halfDepth(this.view, 'support', this.opts);
+    const gap = Math.max(half, 16 / this.cam.scale);
+    return { u: h.p.u + h.axis.u * (gap - half), v: h.p.v + h.axis.v * (gap - half) };
+  }
+
+  /**
+   * Near the end of a support, show both ways to connect: the circle lines the
+   * new support up on the end's centre, the square makes a flush corner joint.
+   */
+  private drawJointTargets(h: Snap) {
+    const ctx = this.ctx;
+    const cursor = this.toScreen(h.p);
+    for (const c of this.connectionPoints(new Set())) {
+      if (!c.joint || !c.visual) continue;
+      const sq = this.toScreen(c.visual);
+      if (Math.hypot(sq.x - cursor.x, sq.y - cursor.y) > 70) continue;
+      const centre = this.toScreen({ u: c.p.u - c.axis!.u * halfDepth(this.view, 'support', this.opts), v: c.p.v - c.axis!.v * halfDepth(this.view, 'support', this.opts) });
+      ctx.lineWidth = 1.5;
+      ctx.strokeStyle = 'rgba(255,211,90,0.6)';
+      ctx.beginPath(); ctx.arc(centre.x, centre.y, 5, 0, Math.PI * 2); ctx.stroke();
+      ctx.strokeStyle = 'rgba(125,255,176,0.7)';
+      ctx.strokeRect(sq.x - 5, sq.y - 5, 10, 10);
+    }
   }
 
   private drawMarquee() {
