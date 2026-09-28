@@ -1,1 +1,247 @@
-# Fantasy-vehicle-creation
+# Vessel Forge — Fantasy Vehicle Creation
+
+A to-scale 3D designer for "realistic" fantasy vehicles: sky ships, airships,
+tracked crawlers, walkers, boats, submersibles and spacecraft. You build a
+vessel from a frame up, furnish it, plumb and wire it, and the app tells you
+whether it would actually fly, float, drive or dive. Then you can shoot holes
+in it and watch what happens.
+
+![Drawing a hull in the 2D blueprint](docs/blueprint.png)
+
+## Running it
+
+```bash
+npm install
+npm run dev      # http://localhost:5173
+npm test         # physics & simulation tests
+npm run build    # static build in dist/
+```
+
+The app opens on an empty sheet in the **2D Blueprint** editor. Sample
+vessels (Sky Galleon, Tracked Crawler, Submersible) are under **☰ File**. Your work autosaves to the browser,
+and you can save/open `.vessel.json` files, export a `.glb` 3D model, or take a
+screenshot.
+
+## Drawing in 2D (Blueprint mode)
+
+The blueprint has a **side profile** (length × height) and a **top plan**
+(length × width). **Tab** switches between them. Everything you draw is a
+real part, so it shows up in 3D with its weight and strength.
+
+**Pens** (keys `1`–`4`):
+
+| Pen | Side profile | Top plan |
+|---|---|---|
+| **Floor** | a horizontal line through the middle of the floor, *Width* wide. Started on a face, it sits on top of it or hangs beneath it | a rectangle on the active layer, or **Freeform**: click any number of corners and close the shape |
+| **Floor + ceiling** | floor, ceiling *Ceiling height* above it, and the room between | same, as a rectangle |
+| **Supports** | beams and pillars, snapped to horizontal and vertical (Shift for any angle), placed against both side walls or on the centre line | click, click for a horizontal beam under the active deck (on the ground if there are no decks yet); double-click for a standing pillar |
+| **Ramp / stairs** | draw from one floor edge to another: a sloped floor or a flight of stairs between them | draw the run; it climbs the set *Rise* from the active deck |
+| **Ladder** | draw it from floor to floor (upright by default, Shift to lean) | click where it stands |
+| **Cut-out** | two corners of a rectangle over a hull wall or a wall frame | two corners over a floor or roof sheet on the active deck |
+| **Framing** | **Outline**: the outline of the craft, point by point, in thin planking or metal sheet. Each section spans the width. Click the first point again to close the loop and seal the hull. **Panel**: click out a flat panel on the sides of the craft, on both side walls or the centre line | **Outline**: walls standing on the active layer. **Panel**: a flat sheet of any shape (roof, deck plate, platform) at the deck's height |
+
+Framing is thin sheet: pine, oak or skywood planking, or iron, steel,
+aluminium, bronze or mythril sheet. You set the thickness in millimetres.
+Each section can also carry armor. Pick the armor material, then choose
+**Armor on: Outside / Inside / Both**. In the inspector, *Flip armor to the
+other face* moves it across if it landed on the wrong side. Sheets and
+floors are treated as held along their long edges, so they span the short
+way.
+
+**Shaping floors and framing:** select a floor or framing sheet in a view
+that looks straight at it. That's the top plan for floors, roofs, bellies
+and sloped sections, and the side profile for walls drawn in the top plan.
+- Drag a **corner** (square handle) to move it.
+- Drag the **+** in the middle of an edge to pull out a new corner.
+- Double-click a corner to remove it. For example, a square becomes a
+  triangle.
+
+Weight and area follow the real shape, armor plating included. Sloped
+sheets stay flat on their own slope while you move corners in the plan.
+Mirrored twins reshape together. *Reset to a rectangle* in the inspector
+undoes the shaping. A sheet seen edge-on (for example a roof in the side
+profile) still shows its two end dots for changing length and angle.
+
+**Cut-outs** punch a real hole through every sheet under the rectangle
+(floors, framing and hull side walls). They can stay open, for a hatch or
+doorway, or get a glazed window frame. The hole's weight comes off the
+sheet, and its corners and edges become snap points, so you can frame
+around it. *Wrap hull* still wraps a solid skin over everything, so leave
+openings in framing you draw yourself.
+
+**Grid:** the toolbar's **Grid snap / Free** button (`G`) switches grid
+snapping off. Parts still snap to each other. Holding **Alt** places a
+single point freely. Lines drawn from a point land on grid lines, not on
+grid steps counted from their start.
+
+**Snapping and connecting:** the edge or centre line you're about to snap
+to lights up (yellow for a point, green for a face or line). Along a face,
+the snap stops where a background grid line crosses it. The red **centre
+line** (the mirror line, in the top plan and in 3D) is a snap target too.
+With Mirror on, a beam drawn straight out from the centre line becomes one
+piece spanning both sides. The end of a support offers two targets. The
+**circle** (on the end's centre) lines the new support up exactly on that
+point. The **square** (just past the end) makes a flush corner joint: the
+new support sits on the end face, level with its outer edge, or butts
+straight onto it if it carries on in line. While you draw, a dashed ghost
+shows exactly where the part will land before you click.
+
+Pens and drags snap in this order:
+- the ends of a part's centre line and every corner of its outline (yellow
+  circle)
+- a part's faces or centre line (green diamond)
+- lines through existing points (dashed guides)
+- otherwise the grid.
+
+A new part inherits from what you start it on:
+- **Faces:** start a stroke on a face, or on a corner, where it uses the
+  face it runs along, and the new part sits against that face instead of
+  cutting through it. For example, a floor drawn along the
+  top of a beam rests on the beam, and a beam drawn along the underside of a
+  floor hangs below it.
+- **Supports:** a support started on another support keeps that support's
+  position. In the side profile that's its distance from the centre line, so
+  an indented beam stays indented. In the top plan it's its height.
+- **Floors and framing:** started on another floor or sheet, they take that
+  part's width.
+
+**Layers:** use **Make layer** and click a floor, or use the button in the
+inspector. In the top plan you draw on the active layer. Tick
+*show only ticked layers* to look at one deck at a time. The plan is cut at
+chest height above the active deck like an architect's drawing, so anything
+above the cut is a dashed outline.
+
+**Editing with the Select tool** (`V`):
+- Drag a part to move it.
+- Drag one of its end dots to move **only that end of that one part**.
+  Shift-drag an end to move every end that meets at that joint.
+- Drag on empty space to box-select. Arrow keys nudge.
+
+**Navigation:** the mouse wheel zooms at the cursor. Right-drag, middle-drag
+or Space-drag pans. `F` fits the drawing to the screen.
+
+## Drawing in 3D
+
+In 3D mode the left panel offers **Supports** and **Framing** pens that work
+directly on the model:
+- **Snapping:** points snap to the ends and corners of parts (yellow), to
+  part surfaces (green), or to a working plane at the height of the last
+  point (blue). Hold Shift to draw straight up and down.
+- **Attaching to supports:** besides ends and corners, you can attach
+  anywhere along a support's four long edges, the middle line of each side
+  face, or its centre line (the line lights up green, and stops where grid
+  lines cross it), plus the midpoints of all of these. Floors and sheets
+  offer their edges the same way. Where a straight line from your last
+  point crosses one of these lines, it snaps to exactly that spot.
+- **Angled but straight:** hold Shift to draw in the upright plane through
+  the last point that faces you (fore–aft or across). Free points that
+  nearly line up with the last point in any direction are lined up
+  exactly. An angled brace then shows e.g. "32° from level · ✓ no lean
+  across", with the line drawn in light blue.
+- **Straight lines:** once you've placed a point, the pointer rides the
+  exact vertical line, or the level line fore–aft or across, through that
+  point whenever it's within a few pixels. The preview line turns that
+  axis's colour and a label reads ✓ Vertical or ✓ Level. Otherwise the
+  label shows how many degrees off vertical or level you are. Move further
+  away, or hold Alt, to place it slightly off on purpose.
+- **Supports:** each click runs a support from the last point. Esc or
+  right-click stops.
+- **Framing:** click three or more corners, then click the first corner
+  again or press Enter. You get a flat sheet through those corners, such as
+  a side panel between existing frames. Its outside faces away from the
+  rest of the craft.
+
+## 3D camera
+
+- **Left-drag:** orbit.
+- **Right-drag or middle-drag:** pan.
+- **Wheel:** zooms toward the point under the cursor.
+- **Double-click:** makes that spot the centre of rotation.
+- **Arrow keys:** slide the camera when nothing is selected.
+- **Fit** or `F`: frames the whole craft.
+
+## Building in 3D
+
+- **Everything is in real metres.** Set the crew height in **Settings**
+  (gnome 1.0 m → giant 5 m). New seats, beds, doors and crew figures are sized
+  to it, so the interior fits the people who will use it.
+- **Pick a part on the left and click in the scene.** Parts snap onto whatever
+  surface you click. Plates, doors, windows and lamps orient themselves flat
+  against that surface. `R` rotates the part before you place it, `Esc` stops
+  placing.
+- **Mirror** (`M`) is on by default. Anything placed off the centre line gets a
+  linked twin on the other side, and edits to either one apply to both. Use
+  *Unlink* in the inspector to let the two sides differ.
+- **Gizmo:** `W` move, `E` rotate, `R` resize. Snap is set in the toolbar.
+  Arrow keys and PgUp/PgDn nudge the selection.
+- **Views** (`1` `2` `3`):
+  - **Structural:** hull plating is hidden, and framing is coloured by how
+    loaded it is (green → red). Anything not attached to the frame glows
+    magenta.
+  - **Interior & Systems:** the hull and gasbags turn see-through. Pipes are
+    coloured by what they carry, wiring shows yellow, and compartments appear.
+  - **Exterior:** the finished look.
+- **Cut** slices the model open along the side or front to see inside.
+- **Wrap hull** answers the "how do siding and armor work" question: select
+  some framing (or nothing, to use all of it) and it generates a skin over the
+  skeleton. Set its material and thickness in the inspector. Its surface area
+  gives its weight, and its enclosed volume gives its buoyancy. You can also
+  place individual hull and armor plates by hand.
+
+## What gets simulated
+
+The **Analysis** tab re-runs on every edit:
+
+| | |
+|---|---|
+| **Mass & balance** | Every part's mass comes from its material density × volume (solid), surface × thickness (shells, tanks, gasbags), or a catalogue weight. Tank and gasbag contents are included. Also shows the centre of gravity. |
+| **Structure** | Contact between parts is found with oriented-box tests. Parts that don't connect back to the main frame are flagged as floating. Each part's weight is passed down to the frame members holding it, and each member's bending capacity (4σS/L) comes from its material strength and cross-section. |
+| **Air** | Gas lift = (air density at altitude − gas density) × volume × g. Wing lift = ½ρv²·S·C<sub>L</sub>, plus levitation crystals. Also checks trim: centre of lift vs centre of gravity, and whether it's top-heavy. |
+| **Land** | Ground pressure from track, wheel and leg contact area. Rollover angle, wheelbase check and power-to-weight. |
+| **Water** | Buoyancy from displacement hulls, draft, reserve buoyancy, and metacentric height (GM = KB + BM − KG) for capsize risk. |
+| **Underwater** | Neutral buoyancy with ballast suggestions. Crush depth from thin-wall hoop stress (P = σt/r) against the water pressure at your operating depth. |
+| **Space** | Thrust-to-mass acceleration, Δv from the rocket equation, and a warning if crew have no pressurised hull. |
+| **Power** | Engine kW against propeller and track demand. Electrical supply reaches lamps, lifts and crystals along the wiring network. |
+
+The **Simulate** tab runs the design over time:
+
+- The craft rises or sinks with its live net lift, and hits the ground if it
+  falls.
+- Use **💥 Damage** (Shift-click repairs) on pipes, gasbags, tanks, wires or
+  anything else.
+- A damaged pipe drains every tank and gasbag on its network. The gasbags
+  sag and lose lift, and the fluid pours into whichever **compartment** the
+  leak is in:
+  - **steam** scalds
+  - **fuel** gives off toxic, flammable vapour
+  - **hydrogen** builds an explosive atmosphere, which a lit lamp, stove or
+    engine in the same room will ignite
+  - **helium** and exhaust suffocate the crew
+  - **water** floods the room
+- **Valves** can be closed to isolate a leak. Open doors and hatches vent a
+  compartment.
+- Crew status (burning, poisoned, suffocating, drowning) comes from the
+  compartment each crew member's head is in.
+- **Moving parts:** lifts, doors, hatches, cargo ramps, bay doors, turrets,
+  and a cargo winch whose chain actually lowers. Operate them from the
+  inspector.
+
+## Code layout
+
+```
+src/core/       data model, catalogue, materials, fluids, geometry,
+                analysis (physics), networks (pipes/wiring), store (undo/mirror),
+                hull wrapping, templates
+src/sim/        time-stepped damage / leak / atmosphere / vertical-motion sim
+src/render/     three.js viewport, procedural part meshes, animation
+src/ui/         catalogue, inspector, analysis, simulation and settings panels
+test/           vitest suite for the physics and simulation
+```
+
+`src/core` and `src/sim` don't depend on the DOM, so they are unit-tested
+directly.
+
+To add a part, give it an entry in `src/core/catalog.ts`. Pick a `shape`, a
+mass mode and any behaviour flags (`container`, `envelope`, `conduit`,
+`thrust`, `mechanism`…). If none of the existing shapes fit, add a mesh
+builder in `src/render/meshes.ts`.
