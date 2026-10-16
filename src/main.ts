@@ -7,6 +7,7 @@ import { Store } from './core/store';
 import { TEMPLATES } from './core/templates';
 import { newDesign, type Design, type Vec3 } from './core/types';
 import { Blueprint } from './render/blueprint';
+import { SheetView } from './render/sheetView';
 import { Viewport, type GizmoMode, type ViewMode } from './render/viewport';
 import { Simulation } from './sim/simulation';
 import { AnalysisPanel } from './ui/analysisPanel';
@@ -15,11 +16,12 @@ import { clear, download, h } from './ui/dom';
 import { InspectorPanel } from './ui/inspector';
 import { PenPanel } from './ui/penPanel';
 import { SettingsPanel } from './ui/settingsPanel';
+import { SheetPanel } from './ui/sheetPanel';
 import { SimPanel } from './ui/simPanel';
 
 const AUTOSAVE_KEY = 'vessel-forge:autosave:v2';
 type Tab = 'inspect' | 'analysis' | 'simulate' | 'settings';
-type Mode = '2d' | '3d';
+type Mode = '2d' | '3d' | 'sheet';
 
 // ── State ────────────────────────────────────────────────────────────────────
 // A fresh start is an empty sheet: build whatever you like. Samples live in File.
@@ -35,9 +37,14 @@ let tab: Tab = 'analysis';
 const $ = (id: string) => document.getElementById(id)!;
 const viewport = new Viewport($('viewport'), store);
 const blueprint = new Blueprint($('viewport'), store);
+const sheetView = new SheetView($('viewport'), store);
 const pensEl = h('div', { class: 'pens' });
 const catalogEl = h('div', { class: 'catalog' });
-$('left').append(pensEl, catalogEl);
+const sheetEl = h('div', { class: 'sheet-panel' });
+sheetEl.hidden = true;
+$('left').append(pensEl, catalogEl, sheetEl);
+const sheetPanel = new SheetPanel(sheetEl, store);
+sheetPanel.onExport = exportSheet;
 const penPanel = new PenPanel(pensEl, store, blueprint, () => { renderToolbar(); penPanel.render(); });
 const catalog = new CatalogPanel(catalogEl, (def) => {
   if (sim) return status('Stop the simulation to edit.');
@@ -121,6 +128,7 @@ store.on('change', () => {
   viewport.sync();
   blueprint.invalidate();
   penPanel.render();
+  if (mode === 'sheet') sheetPanel.render();
   clearTimeout(analysisTimer);
   analysisTimer = window.setTimeout(runAnalysis, 120);
   clearTimeout(saveTimer);
@@ -143,12 +151,14 @@ function runAnalysis() {
   analysis = analyze(store.design);
   viewport.setAnalysis(sim?.state.analysis ? { ...analysis, powered: sim.state.analysis.powered } : analysis);
   inspector.analysis = analysis;
+  sheetView.analysis = analysis;
+  sheetView.invalidate();
   analysisPanel.render(analysis, store.design);
   inspector.render();
   const v = analysis.verdict;
   $('view-overlay').className = `verdict-chip ${v.level}`;
   $('view-overlay').textContent = analysis.partCount ? v.message : 'Empty sheet. Pick a pen on the left and start drawing, or open a sample from ☰ File.';
-  $('view-overlay').hidden = !!sim;
+  $('view-overlay').hidden = !!sim || mode === 'sheet';
   if (performance.now() - lastStatusAt > 4000) status('');
 }
 
@@ -186,6 +196,7 @@ function renderToolbar() {
   const modeSwitch = h('div', { class: 'group mode-switch' },
     btn('✎ 2D Blueprint', () => setMode('2d'), { active: mode === '2d', title: 'Draw the craft in side and top views (Tab switches view)' }),
     btn('⬢ 3D', () => setMode('3d'), { active: mode === '3d', title: 'Orbit around the craft in 3D' }),
+    btn('📐 Sheet', () => setMode('sheet'), { active: mode === 'sheet', title: 'The engineering drawing: side cutaway, plan and front at one scale, with title block and callouts' }),
   );
   const history = h('div', { class: 'group' },
     btn('↶', () => store.undo(), { title: 'Undo (Ctrl+Z)', disabled: !store.canUndo() || !editing }),
@@ -198,6 +209,26 @@ function renderToolbar() {
   const simBtn = h('div', { class: 'group right' },
     sim ? btn('■ Stop sim', stopSim, { cls: 'danger' }) : btn('▶ Simulate', () => { startSim(); setTab('simulate'); }, { cls: 'primary' }),
   );
+  if (mode === 'sheet') {
+    const st = store.design.sheet?.style ?? 'line';
+    const setStyle = (v: 'line' | 'shaded') => store.commit(() => { store.design.sheet = { ...(store.design.sheet ?? {}), style: v }; });
+    clear(tb,
+      h('div', { class: 'brand' }, '⚓ Vessel Forge', h('span', { class: 'design-name' }, store.design.name)),
+      menu, modeSwitch, history,
+      h('div', { class: 'group' },
+        btn('Line art', () => setStyle('line'), { active: st === 'line', title: 'Black ink on white' }),
+        btn('Shaded', () => setStyle('shaded'), { active: st === 'shaded', title: 'Grey shaded cutaway' }),
+      ),
+      h('div', { class: 'group' },
+        btn('−', () => sheetView.zoomBy(1 / 1.25), { title: 'Zoom out' }),
+        btn('+', () => sheetView.zoomBy(1.25), { title: 'Zoom in' }),
+        btn('⌖ Fit', () => sheetView.fit(), { title: 'Fit the sheet to the screen (F)' }),
+      ),
+      h('div', { class: 'group' }, btn('⤓ Export .png', exportSheet, { title: 'Download the sheet as a high-resolution image' })),
+      simBtn,
+    );
+    return;
+  }
   if (mode === '2d') {
     clear(tb,
       h('div', { class: 'brand' }, '⚓ Vessel Forge', h('span', { class: 'design-name' }, store.design.name)),
@@ -267,14 +298,28 @@ function toggleGrid() {
 }
 
 function setMode(m: Mode) {
-  if (sim && m === '2d') stopSim();
+  if (sim && m !== '3d') stopSim();
   mode = m;
-  const is2d = m === '2d';
+  const is2d = m === '2d', is3d = m === '3d', isSheet = m === 'sheet';
   blueprint.setVisible(is2d);
-  viewport.active = !is2d;
-  viewport.renderer.domElement.hidden = is2d;
-  viewport.labelRenderer.domElement.hidden = is2d;
-  penPanel.mode = m;
+  viewport.active = is3d;
+  viewport.renderer.domElement.hidden = !is3d;
+  viewport.labelRenderer.domElement.hidden = !is3d;
+  sheetView.setVisible(isSheet);
+  pensEl.hidden = isSheet;
+  catalogEl.hidden = isSheet;
+  sheetEl.hidden = !isSheet;
+  $('view-overlay').hidden = isSheet || !!sim;
+  if (isSheet) {
+    viewport.setTool('select');
+    blueprint.setTool('select');
+    sheetPanel.render();
+    catalog.setActive(null);
+    renderToolbar();
+    status('Drafting sheet. Drag to pan, scroll to zoom, double-click to fit. Pick Line art or Shaded on the left.');
+    return;
+  }
+  penPanel.mode = m as '2d' | '3d';
   if (is2d) {
     viewport.setTool('select');
     penPanel.render();
@@ -326,7 +371,7 @@ function focusPart(id: string) {
 
 function startSim() {
   if (sim) return;
-  if (mode === '2d') setMode('3d');
+  if (mode !== '3d') setMode('3d');
   simSnapshot = JSON.stringify(store.design);
   store.select([]);
   sim = new Simulation(store.design);
@@ -358,6 +403,15 @@ function stopSim() {
 
 function renderSim() {
   if (tab === 'simulate') simPanel.render(sim, paused, speed, viewport.tool === 'damage');
+}
+
+async function exportSheet() {
+  status('Inking the sheet at full resolution…');
+  await new Promise((r) => setTimeout(r, 30));
+  const blob = await sheetView.exportPNG();
+  if (!blob) return status('Could not export the sheet.');
+  download(`${slug(store.design.name)}-sheet.png`, blob, 'image/png');
+  status('Sheet exported as a PNG (A3 at about 300 dpi).');
 }
 
 async function exportGLB() {
@@ -436,6 +490,10 @@ window.addEventListener('keydown', (e) => {
   if ((k === 'delete' || k === 'backspace') && store.selection.length && !sim) { store.removeParts(store.selection); return; }
   if (k === 'm') { store.mirror = !store.mirror; renderToolbar(); return; }
   if (k === 'g') { toggleGrid(); return; }
+  if (mode === 'sheet') {
+    if (k === 'f') sheetView.fit();
+    return;
+  }
   if (mode === '2d') {
     if (blueprint.handleKey(e)) { renderToolbar(); penPanel.render(); return; }
     if (k === 'escape') { store.select([]); return; }
@@ -535,4 +593,4 @@ if (!store.design.parts.length) blueprint.setTool('pen', { pen: 'floor' });
 setTimeout(fitAll, 50);
 
 // Handy for scripting and debugging from the browser console.
-(window as unknown as Record<string, unknown>).vesselForge = { store, viewport, blueprint, getSim: () => sim, startSim, stopSim, setMode };
+(window as unknown as Record<string, unknown>).vesselForge = { store, viewport, blueprint, sheetView, getSim: () => sim, startSim, stopSim, setMode };

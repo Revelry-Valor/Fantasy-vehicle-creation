@@ -59,12 +59,37 @@ export interface DesignLayer {
   visible: boolean;
 }
 
+/** Title-block details and options for the printed drafting sheet. */
+export interface SheetSettings {
+  style: 'line' | 'shaded';
+  subtitle: string;
+  pattern: string;
+  drawnBy: string;
+  /** Scale denominator (1:N); 0 picks the largest standard scale that fits. */
+  scale: number;
+  views: { side: boolean; plan: boolean; front: boolean };
+  callouts: boolean;
+  specs: boolean;
+}
+
+export const DEFAULT_SHEET: SheetSettings = {
+  style: 'line',
+  subtitle: 'Interior detail',
+  pattern: '',
+  drawnBy: '',
+  scale: 0,
+  views: { side: true, plan: true, front: true },
+  callouts: true,
+  specs: true,
+};
+
 export interface Design {
   name: string;
   version: 1;
   settings: DesignSettings;
   parts: PartInstance[];
   layers?: DesignLayer[];
+  sheet?: Partial<SheetSettings>;
 }
 
 export const DEFAULT_SETTINGS: DesignSettings = {

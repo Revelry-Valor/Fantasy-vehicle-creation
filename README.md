@@ -226,6 +226,37 @@ The **Simulate** tab runs the design over time:
   and a cargo winch whose chain actually lowers. Operate them from the
   inspector.
 
+## The drafting sheet (📐 Sheet mode)
+
+The **📐 Sheet** button turns the craft into an engineer's general-arrangement
+drawing on an A3 sheet. All views share one scale, picked from the standard
+scales (1:50, 1:75, 1:100…) so the largest one that fits is used, or you can
+set it yourself.
+
+- **Side elevation, section A–A:** a cutaway on the centre line, looking to
+  starboard. Framing, beams, decks and plating are sliced and the cut faces are
+  hatched: diagonal hatching for metal, grain for timber, cross-hatching for
+  armour, and solid black for sections too thin to hatch. Fittings (engines,
+  tanks, seats, guns) stay whole, the way a cutaway shows them.
+- **Plan** (from above) and **front elevation**, with centre lines, overall
+  dimensions, section marks, and a ground line or waterline.
+- **Structure is drawn as structure:**
+  - Metal sheets show plate seams with rivet rows.
+  - Timber decks and walls show planks with staggered butt joints.
+  - I-beams have flanges and lightening holes.
+  - Box girders have riveted edges and web stiffeners.
+  - Struts have end collars and ribs are riveted.
+- **Callouts:** every fitting and compartment gets a number. Parts with the
+  same name are counted together (×2). Name parts in the Inspector to control
+  the labels.
+- **Principal particulars:** role, dimensions, loaded and empty mass, crew,
+  lift or displacement, thrust, power, armour and armament, all taken from the
+  analysis.
+- **Title block:** name, subtitle, pattern or class, scale, drawn by, date.
+- **Two styles:** *Line* (black ink on white with a numbered key) or *Shaded*
+  (a grey cutaway with the labels written on the drawing).
+- **⤓ Export .png** saves the sheet at about 300 dpi.
+
 ## Code layout
 
 ```
@@ -233,7 +264,8 @@ src/core/       data model, catalogue, materials, fluids, geometry,
                 analysis (physics), networks (pipes/wiring), store (undo/mirror),
                 hull wrapping, templates
 src/sim/        time-stepped damage / leak / atmosphere / vertical-motion sim
-src/render/     three.js viewport, procedural part meshes, animation
+src/render/     three.js viewport, 2D blueprint, procedural part meshes,
+                animation, drafting sheet (sheet.ts inks views from three passes)
 src/ui/         catalogue, inspector, analysis, simulation and settings panels
 test/           vitest suite for the physics and simulation
 ```

@@ -194,6 +194,11 @@ function build(p: PartInstance, M: Mats): Built {
   switch (def.shape) {
     case 'box': {
       if (p.type === 'deck' && ((p.points && p.points.length >= 9) || p.holes?.length)) return real(outlineSlab(sheetOutline(p), H, 0, M.main, p.holes));
+      if (p.type === 'ibeam') {
+        // Two flanges and a web, in the unit box: height along local Y.
+        const f = 0.16, w = 0.2;
+        return unit(box(1, f, 1, M.main, 0, 0.5 - f / 2, 0), box(1, f, 1, M.main, 0, -0.5 + f / 2, 0), box(w, 1 - 2 * f + 0.002, 1, M.main));
+      }
       return unit(box(1, 1, 1, M.main));
     }
     case 'tube': {

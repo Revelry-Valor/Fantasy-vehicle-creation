@@ -214,3 +214,9 @@ button.mini { padding: 2px 6px; font-size: 11px; font-variant-numeric: tabular-n
 .draw-label { margin-top: -30px; font: 600 11px system-ui, sans-serif; color: #ffe39a; background: rgba(12, 20, 30, 0.82); padding: 2px 6px; border-radius: 4px; white-space: nowrap; pointer-events: none; }
 .draw-label.straight { color: #8dffb0; }
 .draw-label.partial { color: #8fe9ff; }
+
+/* Drafting sheet */
+canvas.sheet-view { position: absolute; inset: 0; display: block; cursor: grab; touch-action: none; }
+.checks { display: grid; grid-template-columns: 1fr 1fr; gap: 4px 8px; margin: 6px 0 10px; }
+label.check { display: flex; gap: 6px; align-items: center; cursor: pointer; }
+button.wide-btn { width: 100%; margin: 6px 0; padding: 7px; }
