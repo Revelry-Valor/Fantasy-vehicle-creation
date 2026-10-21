@@ -1,9 +1,9 @@
 {
-  "name": "fantasy-vehicle-creation",
+  "name": "vehicle-studio",
   "private": true,
   "version": "0.1.0",
   "type": "module",
-  "description": "A to-scale 3D designer for fantasy sky ships, land vehicles, submersibles and spacecraft with physical analysis and systems simulation.",
+  "description": "A browser 3D studio for building vehicles from beams and plates on a grid, with curved hulls, live mirroring and posable joints.",
   "scripts": {
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
