@@ -1,0 +1,23 @@
+{
+  "name": "vehicle-studio",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "A browser 3D studio for building vehicles from beams and plates on a grid, with curved hulls, live mirroring and posable joints.",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "three": "^0.186.1"
+  },
+  "devDependencies": {
+    "@types/three": "^0.186.0",
+    "typescript": "^7.0.2",
+    "vite": "^8.3.1",
+    "vitest": "^5.0.2"
+  }
+}
